@@ -31,7 +31,6 @@ This repository is a widget for Eva's home page: a small web page that Eva shows
 
 - `npm run check` runs every check: the format, the lint, the contract check (`npm run check:widget`) and the tests. CI runs the same checks as the "lint" and "test" jobs.
 - `npm start` runs the widget at http://localhost:3000/. Add `?size=small`, `medium`, `large`, `tall`, `xlarge` or `full` to the address.
-- The widget follows contract 2. Until Eva's `main` serves `docs/widgets/manifest-v2.json`, the contract check uses the copy in `scripts/contract/`. Delete the copy once Eva serves the file.
 
 ## Skills
 
