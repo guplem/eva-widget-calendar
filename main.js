@@ -46,7 +46,6 @@ const requestTimeoutMs = 15_000;
 const locationTimeoutMs = 8000;
 const calendarRefreshMs = 5 * 60_000;
 const weatherRefreshMs = 30 * 60_000;
-const retryMs = 5 * 60_000;
 const tickMs = 60_000;
 const svgSpace = "http://www.w3.org/2000/svg";
 const noCalendar = "Your calendar did not load. The widget tries again in a few minutes.";
@@ -104,13 +103,14 @@ async function loadCalendar() {
     readCalendarPath("calendars.json"),
     readCalendarPath("events.json", query),
   ]);
+  // A new day starts here, also when the load fails, so the minute tick does not ask again each minute.
+  state.today = today;
   clearTimeout(calendarTimer);
   calendarTimer = setTimeout(() => void loadCalendar().then(scheduleDraw), calendarRefreshMs);
   if (calendars.failed === true || events.failed === true) {
-    // A failure keeps the events that the widget shows. Only a widget with none says so.
+    // A failure keeps the events that the widget shows, and the next load tries again. Only a
+    // widget with no events yet says so.
     if (state.calendar !== "ready") state.calendar = "error";
-    clearTimeout(calendarTimer);
-    calendarTimer = setTimeout(() => void loadCalendar().then(scheduleDraw), retryMs);
     return;
   }
   const list = readCalendars(calendars.body);
@@ -121,7 +121,6 @@ async function loadCalendar() {
   }
   state.calendars = new Map(list.map((calendar) => [calendar.id, calendar]));
   state.events = found;
-  state.today = today;
   state.calendar = "ready";
 }
 
