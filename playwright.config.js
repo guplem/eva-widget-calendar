@@ -1,14 +1,15 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// The tests run the widget on the small static server, as GitHub Pages runs it: writes fail there,
-// and tests/helpers.js fakes them where a test needs them.
+// The tests run the widget on the small static server, as GitHub Pages runs it: the eva/ paths
+// answer 404 there, and tests/helpers.js fakes them where a test needs Eva. The time zone is fixed,
+// so the hours of the mock events do not depend on the machine.
 export default defineConfig({
   testDir: "tests",
   testMatch: "*.spec.js",
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   reporter: process.env.CI ? "github" : "list",
-  use: { baseURL: "http://localhost:3100/", trace: "retain-on-failure" },
+  use: { baseURL: "http://localhost:3100/", trace: "retain-on-failure", timezoneId: "UTC", locale: "en-GB" },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
     command: "node scripts/serve.js",

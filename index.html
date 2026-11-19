@@ -10,16 +10,17 @@
     <script type="module" src="main.js"></script>
   </head>
   <body>
-    <main class="widget" data-size="medium">
+    <main class="widget" data-size="xlarge" data-state="loading">
       <header class="widget-header">
-        <h1 class="widget-title">Habits</h1>
-        <p class="widget-summary" data-role="summary"></p>
+        <h1 class="widget-title">Calendar</h1>
+        <p class="widget-range" data-role="range"></p>
       </header>
-      <ul class="habit-list" data-role="habits"></ul>
-      <footer class="widget-footer">
-        <p class="widget-location" data-role="location"></p>
-        <p class="widget-note" data-role="note" hidden></p>
-      </footer>
+      <section class="view" data-role="view"></section>
+      <div class="message" data-role="off">
+        <p class="message-title">Eva cannot read your Google Calendar yet.</p>
+        <p>In Eva, open Settings &gt; Connections &gt; Google. Log in to Google, and tick Calendar.</p>
+      </div>
+      <p class="message" data-role="message"></p>
     </main>
   </body>
 </html>

@@ -11,6 +11,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 
 const contractAddress = "https://raw.githubusercontent.com/guplem/eva/main/docs/widgets";
+const localContract = fileURLToPath(new URL("contract/", import.meta.url));
 
 async function readText(path) {
   try {
@@ -33,6 +34,12 @@ async function contractFile(name) {
   const folder = process.env.EVA_CONTRACT_DIR;
   if (folder !== undefined && folder !== "") return JSON.parse(await readFile(join(folder, name), "utf8"));
   const response = await fetch(`${contractAddress}/${name}`);
+  // Contract 2 is new: until Eva's main serves its schema files, the copy in scripts/contract/
+  // stands in. Once Eva serves them, her files win, and the copy can go.
+  if (response.status === 404) {
+    const local = await readText(join(localContract, name));
+    if (local !== null) return JSON.parse(local);
+  }
   if (!response.ok) throw new Error(`Could not read ${name} of the widget contract (HTTP ${String(response.status)}).`);
   return response.json();
 }

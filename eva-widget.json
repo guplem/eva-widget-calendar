@@ -1,38 +1,46 @@
 {
-  "contract": 1,
+  "contract": 2,
   "name": "Calendar",
   "entry": "index.html",
-  "size": "medium",
+  "size": "xlarge",
   "inputs": [
     {
-      "id": "title",
-      "type": "text",
-      "label": "Title",
-      "description": "The title at the top of the widget.",
-      "why": "The widget shows it as its heading.",
-      "required": false,
-      "default": "Habits"
-    },
-    {
-      "id": "habits",
-      "type": "folder",
-      "label": "Habits folder",
-      "description": "The folder with one file for each habit, such as meditate.json.",
-      "why": "The widget shows your habits, and saves a check when you mark a habit done today.",
-      "required": true,
-      "access": "write",
-      "schema": "schemas/habits.json",
-      "files": "*.json"
+      "id": "calendar",
+      "type": "eva-google-calendar",
+      "access": "read",
+      "label": "Google Calendar",
+      "description": "Your Google calendars and their events, through Eva's Google login.",
+      "why": "The widget shows your events of the next days, in the colour of each calendar. It only reads them, and it never sees your Google login.",
+      "required": true
     },
     {
       "id": "location",
       "type": "eva-location",
       "label": "Location",
       "description": "Your last location, from your phone.",
-      "why": "The widget shows near which place you check your habits.",
+      "why": "The widget shows the forecast of each day next to your events. It sends your location to Open-Meteo, rounded to about one kilometre.",
       "required": false
+    },
+    {
+      "id": "unit",
+      "type": "choice",
+      "label": "Temperature unit",
+      "description": "Celsius or Fahrenheit.",
+      "why": "The widget shows each temperature in this unit.",
+      "required": false,
+      "choices": ["celsius", "fahrenheit"],
+      "default": "celsius"
     }
   ],
-  "hosts": [],
-  "prompt": "Habits live in {habits}, one JSON file for each habit. Before you create a habit file, ask the person once."
+  "hosts": [
+    {
+      "url": "https://api.open-meteo.com",
+      "why": "The widget gets the forecast from Open-Meteo, a free weather service. It sends your location, rounded to about one kilometre."
+    },
+    {
+      "url": "https://air-quality-api.open-meteo.com",
+      "why": "The widget gets the air quality of today from Open-Meteo. It sends your location, rounded to about one kilometre."
+    }
+  ],
+  "prompt": "The Calendar widget on the home page shows the person's Google Calendar for the next days, with the forecast of each day."
 }
