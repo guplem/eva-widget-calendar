@@ -6,6 +6,7 @@
 // calendar.js and forecast.js hold the logic. This file loads the data and draws it.
 import {
   addDays,
+  allDayLanes,
   allDayOn,
   clock,
   clockOf,
@@ -23,7 +24,9 @@ import {
   rangeLabel,
   readCalendars,
   readEvents,
+  tooltipPosition,
   untilText,
+  whenText,
 } from "./calendar.js";
 import {
   airQualityOf,
@@ -36,6 +39,8 @@ import {
   readForecast,
   sky,
   weatherAt,
+  weatherBetween,
+  weatherOfDays,
 } from "./forecast.js";
 
 const sizes = ["small", "medium", "large", "tall", "xlarge", "full"];
@@ -245,15 +250,23 @@ function timeText(event) {
   return event.allDay ? "All day" : `${clockOf(event.start)}–${clockOf(event.end)}`;
 }
 
-/** An event as a link that opens Google Calendar in a new tab, or as a box with no link. */
-function eventNode(event, className) {
+/** The event of each drawn event node, for its details. */
+const eventOf = new WeakMap();
+
+/**
+ * An event as a link that opens Google Calendar in a new tab, or as a box with no link. `place`
+ * names where it is drawn, such as a day, so a redraw finds the same node again for its details.
+ * Each one takes the keyboard focus, which shows its details.
+ */
+function eventNode(event, className, place) {
   const node = element(event.link === null ? "div" : "a", className);
   if (event.link !== null) {
     node.href = event.link;
     node.target = "_blank";
     node.rel = "noopener";
-  }
-  node.title = [event.title, timeText(event), event.place].filter(Boolean).join(" · ");
+  } else node.tabIndex = 0;
+  node.dataset.key = `${event.id}|${place}`;
+  eventOf.set(node, event);
   node.append(element("span", "event-bar"));
   return paint(node, event.calendarId);
 }
@@ -277,7 +290,7 @@ function drawSmall(view) {
     box.append(element("p", "small-empty", `No events in the next ${String(windowDays)} days.`));
   } else {
     const { event } = next;
-    const card = eventNode(event, "small-next");
+    const card = eventNode(event, "small-next", "small");
     const when = next.now
       ? `Now · until ${clockOf(event.end)}`
       : `Next · ${untilText(event.start.getTime() - now.getTime())}`;
@@ -307,7 +320,7 @@ function agendaRows(day, now) {
   const rows = [];
   for (const event of allDayOn(state.events, day)) {
     const row = element("li", "agenda-row");
-    const box = eventNode(event, "agenda-event");
+    const box = eventNode(event, "agenda-event", `list-${day}`);
     box.append(element("span", "agenda-title", event.title));
     row.append(element("span", "agenda-time", "All day"), box);
     rows.push(row);
@@ -321,7 +334,7 @@ function agendaRows(day, now) {
     }
     const row = element("li", "agenda-row");
     if (event.start <= now) row.classList.add("is-now");
-    const box = eventNode(event, "agenda-event");
+    const box = eventNode(event, "agenda-event", `list-${day}`);
     box.append(element("span", "agenda-title", event.title));
     if (event.place !== null) box.append(element("span", "agenda-place", event.place));
     row.append(element("span", "agenda-time", clock(from)), box);
@@ -510,8 +523,8 @@ function drawGrid(view, viewKind) {
         state.unit,
       )
     : null;
-  const parts = days.map((day) => layoutParts(partsOn(state.events, day)));
-  const range = hourRange(parts.flat(), viewKind === "week" ? { from: 7, to: 21 } : { from: 8, to: 20 });
+  const dayParts = days.map((day) => partsOn(state.events, day));
+  const range = hourRange(dayParts.flat(), viewKind === "week" ? { from: 7, to: 21 } : { from: 8, to: 20 });
   const hours = range.to - range.from;
 
   const grid = element("div", `grid grid-${viewKind}`);
@@ -553,18 +566,28 @@ function drawGrid(view, viewKind) {
   });
   grid.append(head);
 
-  const allDay = days.map((day) => allDayOn(state.events, day));
-  if (allDay.some((list) => list.length > 0)) {
+  // The all-day row: one bar for each event over its days, in lanes. The cells of the days draw
+  // the lines between the days behind the bars.
+  const allDay = allDayLanes(state.events, days);
+  if (allDay.bars.length > 0) {
     const row = element("div", "grid-all-day");
+    row.style.setProperty("--lanes", String(allDay.lanes));
     row.append(element("span", "all-day-label", "All day"));
-    for (const list of allDay) {
+    days.forEach((day, index) => {
       const cell = element("div", "all-day-cell");
-      for (const event of list) {
-        const box = eventNode(event, "event all-day-event");
-        box.append(element("b", "event-title", event.title));
-        cell.append(box);
-      }
+      if (day === state.today) cell.classList.add("is-today");
+      cell.style.setProperty("grid-column", String(index + 2));
       row.append(cell);
+    });
+    for (const bar of allDay.bars) {
+      const node = eventNode(bar.event, "all-day-event", "all-day");
+      node.style.setProperty("grid-column", `${String(bar.first + 2)} / ${String(bar.last + 3)}`);
+      node.style.setProperty("grid-row", String(bar.lane + 1));
+      if (bar.cutStart) node.classList.add("is-cut-start");
+      if (bar.cutEnd) node.classList.add("is-cut-end");
+      if (bar.event.endDate < state.today) node.classList.add("is-past");
+      node.append(element("b", "event-title", bar.event.title));
+      row.append(node);
     }
     grid.append(row);
   }
@@ -605,21 +628,31 @@ function drawGrid(view, viewKind) {
     axis.append(tag);
   }
 
-  parts.forEach((list, index) => {
+  // The stack of overlapping events: a later event joins the group of the one that it overlaps
+  // while that one's title still has no room above it, and sits on top of it, indented, after.
+  const columnWidth = columns[0].clientWidth || 100;
+  const stacking = {
+    together: Math.min(1, Math.max(0.34, 18 / hourPx)),
+    indent: Math.min(0.25, Math.max(0.12, 20 / columnWidth)),
+    minWidth: 0.5,
+  };
+  dayParts.forEach((list, index) => {
     const column = columns[index];
-    for (const item of list) {
+    for (const item of layoutParts(list, stacking)) {
       const { event } = item;
       const from = Math.max(item.from, range.from);
       const to = Math.min(item.to, range.to);
       const height = (to - from) * hourPx - 2;
-      const box = eventNode(event, "event");
+      const box = eventNode(event, "event", days[index]);
       if (event.end <= now) box.classList.add("is-past");
+      if (item.depth > 0) box.classList.add("is-stacked");
+      box.style.setProperty("z-index", String(1 + item.depth));
       if (height < 30) box.classList.add("is-short");
       if (height > 44) box.classList.add("is-tall");
       box.style.setProperty("top", at(from));
       box.style.setProperty("height", `${String(Math.max(12, height))}px`);
-      box.style.setProperty("left", `calc(${String((item.column * 100) / item.columns)}% + 2px)`);
-      box.style.setProperty("width", `calc(${String(100 / item.columns)}% - 4px)`);
+      box.style.setProperty("left", `calc(${String(item.left * 100)}% + 2px)`);
+      box.style.setProperty("width", `calc(${String(item.width * 100)}% - 4px)`);
       box.append(element("b", "event-title", event.title), element("small", "event-time", timeText(event)));
       if (event.place !== null && height > 58) box.append(element("small", "event-place", event.place));
       column.append(box);
@@ -683,9 +716,169 @@ function watchHover(grid) {
   grid.grid.addEventListener("pointerleave", clear);
 }
 
+// --- The details of an event ---------------------------------------------------------------------
+
+/**
+ * One tooltip shows the details of an event, inverted as Eva's own tooltip: on hover with a mouse,
+ * on keyboard focus, and on a touch screen on the first tap. A second tap on the same event opens
+ * it in Google Calendar; a tap anywhere else closes the details. The tooltip takes no pointer, so
+ * the readout of the chart goes on under it.
+ */
+const tooltip = { node: null, key: null, armed: null, pointer: "mouse", dismissed: null, restoring: false };
+
+function tooltipNode() {
+  if (tooltip.node === null) {
+    tooltip.node = element("div", "tooltip");
+    tooltip.node.id = "event-tooltip";
+    tooltip.node.setAttribute("role", "tooltip");
+    tooltip.node.hidden = true;
+    root.append(tooltip.node);
+  }
+  return tooltip.node;
+}
+
+/** The forecast during an event, as one line of its details, or null with no forecast. */
+function eventWeather(event) {
+  if (state.weather !== "ready") return null;
+  const during =
+    event.start === undefined
+      ? weatherOfDays(state.forecast, event.date, event.endDate)
+      : weatherBetween(state.forecast, event.start, event.end);
+  if (during === null) return null;
+  const line = element("span", "tooltip-weather");
+  const words = [];
+  if (during.code !== null) {
+    const { text, icon: kind } = sky(during.code);
+    line.append(icon(kind));
+    words.push(text);
+  }
+  const low = degrees(during.low);
+  const high = degrees(during.high);
+  words.push(low === high ? low : `${low}–${high}`);
+  if (during.rain !== null) words.push(`Rain ${String(during.rain)}%`);
+  line.append(words.join(" · "));
+  return line;
+}
+
+function showTooltip(target) {
+  const event = eventOf.get(target);
+  if (event === undefined) return;
+  const node = tooltipNode();
+  const calendar = state.calendars.get(event.calendarId) ?? unknownCalendar;
+  const name = element("span", "tooltip-calendar");
+  name.append(paint(element("span", "legend-swatch event-bar"), event.calendarId), calendar.name);
+  const lines = [element("b", "tooltip-title", event.title), element("span", "tooltip-when", whenText(event)), name];
+  if (event.place !== null) lines.push(element("span", "tooltip-place", event.place));
+  const weather = eventWeather(event);
+  if (weather !== null) lines.push(weather);
+  node.replaceChildren(...lines);
+  node.hidden = false;
+  for (const other of root.querySelectorAll("[aria-describedby='event-tooltip']"))
+    other.removeAttribute("aria-describedby");
+  target.setAttribute("aria-describedby", "event-tooltip");
+  tooltip.key = target.dataset.key;
+
+  // The event's box, cut to the part that shows in its scroll area.
+  const box = target.getBoundingClientRect();
+  const area = target.closest(".grid-scroll")?.getBoundingClientRect() ?? root.getBoundingClientRect();
+  const anchor = {
+    left: box.left,
+    right: box.right,
+    top: Math.max(box.top, area.top),
+    bottom: Math.max(Math.max(box.top, area.top), Math.min(box.bottom, area.bottom)),
+  };
+  const frame = root.getBoundingClientRect();
+  const size = node.getBoundingClientRect();
+  const place = tooltipPosition(anchor, { width: size.width, height: size.height }, frame);
+  node.style.setProperty("left", `${String(place.left)}px`);
+  node.style.setProperty("top", `${String(place.top)}px`);
+  node.dataset.side = place.side;
+}
+
+function hideTooltip() {
+  if (tooltip.node !== null) tooltip.node.hidden = true;
+  tooltip.key = null;
+  for (const other of root.querySelectorAll("[aria-describedby='event-tooltip']"))
+    other.removeAttribute("aria-describedby");
+}
+
+const eventTarget = (event) => (event.target instanceof Element ? event.target.closest("[data-key]") : null);
+
+function watchTooltip() {
+  root.addEventListener("pointerover", (event) => {
+    const target = eventTarget(event);
+    if (event.pointerType === "mouse" && target !== null) showTooltip(target);
+  });
+  root.addEventListener("pointerout", (event) => {
+    const target = eventTarget(event);
+    if (event.pointerType !== "mouse" || target === null) return;
+    if (event.relatedTarget instanceof Node && target.contains(event.relatedTarget)) return;
+    if (document.activeElement === target) return;
+    hideTooltip();
+  });
+  root.addEventListener("pointerdown", (event) => {
+    tooltip.pointer = event.pointerType;
+    if (event.pointerType !== "mouse" && eventTarget(event) === null) {
+      tooltip.armed = null;
+      hideTooltip();
+    }
+  });
+  root.addEventListener("click", (event) => {
+    const target = eventTarget(event);
+    if (target === null || tooltip.pointer === "mouse") return;
+    // A touch: the first tap shows the details, the second opens the event.
+    if (tooltip.armed !== target.dataset.key) {
+      event.preventDefault();
+      tooltip.armed = target.dataset.key;
+      showTooltip(target);
+      return;
+    }
+    tooltip.armed = null;
+  });
+  root.addEventListener("focusin", (event) => {
+    const target = eventTarget(event);
+    if (target === null) return;
+    // A redraw gives the focus back; details closed with Escape stay closed.
+    if (tooltip.restoring && tooltip.dismissed === target.dataset.key) return;
+    tooltip.dismissed = null;
+    showTooltip(target);
+  });
+  root.addEventListener("focusout", (event) => {
+    const target = eventTarget(event);
+    if (target !== null && tooltip.pointer === "mouse" && !target.matches(":hover")) hideTooltip();
+  });
+  root.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    tooltip.dismissed = tooltip.key;
+    hideTooltip();
+  });
+}
+
+/** After a redraw, the details stay on the same event, on its new node, or close. */
+function keepTooltip(focusedKey) {
+  const find = (key) => (key === null ? null : root.querySelector(`[data-key="${CSS.escape(key)}"]`));
+  const focused = find(focusedKey);
+  if (focused !== null) {
+    tooltip.restoring = true;
+    focused.focus({ preventScroll: true });
+    tooltip.restoring = false;
+    return;
+  }
+  const shown = find(tooltip.key);
+  if (shown === null) hideTooltip();
+  else showTooltip(shown);
+}
+
 // --- Start ----------------------------------------------------------------------------------------
 
 function draw() {
+  const focusedKey =
+    document.activeElement instanceof HTMLElement ? (document.activeElement.dataset.key ?? null) : null;
+  drawView();
+  keepTooltip(focusedKey);
+}
+
+function drawView() {
   const view = part("view");
   root.dataset.state = state.calendar;
   part("message").textContent = state.calendar === "error" ? noCalendar : "";
@@ -722,6 +915,7 @@ async function start() {
   const config = (await request("config.json")).body ?? {};
   if (config.unit === "fahrenheit") state.unit = "fahrenheit";
   await Promise.all([loadCalendar(), loadWeather()]);
+  watchTooltip();
   draw();
   new ResizeObserver(scheduleDraw).observe(root);
   // The now line moves, and at midnight a new day starts.

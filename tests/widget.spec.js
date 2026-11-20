@@ -8,6 +8,8 @@ test.beforeEach(async ({ page }) => {
 });
 
 const event = (page, title) => page.locator(".event", { hasText: title }).first();
+const box = async (locator) => locator.boundingBox();
+const zIndex = (locator) => locator.evaluate((node) => Number(getComputedStyle(node).zIndex));
 
 test.describe("the week view", () => {
   test.use({ viewport: { width: 1280, height: 800 } });
@@ -48,23 +50,6 @@ test.describe("the week view", () => {
     await expect(page.locator(".day-column.is-today .now-line")).toHaveCount(1);
     await expect(page.locator(".now-tag")).toHaveText("14:20");
     await expect(page.locator(".chart-now")).toHaveCount(1);
-  });
-
-  test("puts overlapping events side by side", async ({ page }) => {
-    await open(page, "xlarge");
-    const review = await event(page, "Code review").boundingBox();
-    const sync = await event(page, "Design sync").boundingBox();
-    expect(sync.x).toBeGreaterThan(review.x + review.width - 1);
-    expect(Math.abs(sync.width - review.width)).toBeLessThan(2);
-  });
-
-  test("shows all-day events in their own row, on each of their days", async ({ page }) => {
-    await open(page, "xlarge");
-    const cells = page.locator(".all-day-cell");
-    await expect(cells.nth(3)).toContainText("Anniversary");
-    await expect(cells.nth(3)).toContainText("Trip to the coast");
-    await expect(cells.nth(4)).toContainText("Trip to the coast");
-    await expect(cells.nth(0)).toBeEmpty();
   });
 
   test("gives each calendar its colour and its own pattern, also in the legend", async ({ page }) => {
@@ -288,4 +273,228 @@ test("runs under Eva's Content Security Policy, with no inline script or style",
   const top = await event(page, "Deep work").evaluate((node) => node.style.top);
   expect(top).not.toBe("");
   expect(violations).toEqual([]);
+});
+
+test.describe("whole-day events", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  test("an event from midnight to midnight shows in the all-day row, never as a block in the grid", async ({
+    page,
+  }) => {
+    await open(page, "xlarge");
+    const row = page.locator(".grid-all-day");
+    await expect(row.locator(".all-day-event", { hasText: "Offsite day" })).toHaveCount(1);
+    await expect(page.locator(".day-column .event", { hasText: "Offsite day" })).toHaveCount(0);
+    // It stands over Friday, the third column.
+    const bar = await box(row.locator(".all-day-event", { hasText: "Offsite day" }));
+    const friday = await box(page.locator(".day-head").nth(2));
+    expect(bar.x).toBeGreaterThanOrEqual(friday.x - 1);
+    expect(bar.x + bar.width).toBeLessThanOrEqual(friday.x + friday.width + 1);
+  });
+
+  test("an event of several days is one bar over each of its days", async ({ page }) => {
+    await open(page, "xlarge");
+    const bar = await box(page.locator(".all-day-event", { hasText: "Trip to the coast" }));
+    const saturday = await box(page.locator(".day-head").nth(3));
+    const sunday = await box(page.locator(".day-head").nth(4));
+    expect(Math.abs(bar.x - saturday.x)).toBeLessThan(6);
+    expect(Math.abs(bar.x + bar.width - (sunday.x + sunday.width))).toBeLessThan(6);
+  });
+
+  test("an event with no title reads Busy", async ({ page }) => {
+    await open(page, "xlarge");
+    await expect(page.locator(".day-column").nth(1).locator(".event", { hasText: "Busy" })).toHaveCount(1);
+    await expect(page.getByText("(No title)")).toHaveCount(0);
+  });
+
+  test("inside Eva, a timed event over whole days goes to the row, and one over midnight stays in the grid, cut at the day edge", async ({
+    page,
+  }) => {
+    await fakeEvaCalendar(page, {
+      calendars: [{ id: "home", name: "Home", color: "#0b8043", primary: true }],
+      events: [
+        {
+          id: "whole",
+          calendarId: "home",
+          title: "",
+          startAt: `${testToday}T00:00:00+00:00`,
+          endAt: "2026-03-12T00:00:00+00:00",
+          place: null,
+          link: null,
+        },
+        {
+          id: "night",
+          calendarId: "home",
+          title: "Late show",
+          startAt: `${testToday}T22:00:00+00:00`,
+          endAt: "2026-03-12T02:00:00+00:00",
+          place: null,
+          link: null,
+        },
+      ],
+    });
+    await open(page, "xlarge");
+    await expect(page.locator(".all-day-event")).toHaveText(["Busy"]);
+    const parts = page.locator(".day-column .event", { hasText: "Late show" });
+    await expect(parts).toHaveCount(2);
+    const first = await box(parts.nth(0));
+    const second = await box(parts.nth(1));
+    const column = await box(page.locator(".day-column").nth(0));
+    // The first part ends at the bottom of Wednesday; the second starts at the top of Thursday.
+    expect(Math.abs(first.y + first.height - (column.y + column.height))).toBeLessThan(4);
+    expect(Math.abs(second.y - column.y)).toBeLessThan(4);
+    expect(second.x).toBeGreaterThan(first.x + first.width);
+  });
+});
+
+for (const [width, days] of [
+  [1280, 7],
+  [700, 5],
+  [390, 3],
+]) {
+  test.describe(`the stack of overlapping events at ${String(days)} days`, () => {
+    test.use({ viewport: { width, height: 800 } });
+
+    test("events that start together share the width", async ({ page }) => {
+      test.skip(days < 3, "Friday is not shown");
+      await open(page, "xlarge");
+      const one = await box(event(page, "One to one"));
+      const interview = await box(event(page, "Interview"));
+      expect(Math.abs(one.width - interview.width)).toBeLessThan(2);
+      expect(Math.abs(one.x - interview.x)).toBeGreaterThan(one.width - 2);
+    });
+
+    test("a short event inside a long one sits on top of it, indented, and the long one keeps its width", async ({
+      page,
+    }) => {
+      await open(page, "xlarge");
+      const column = await box(page.locator(".day-column").nth(1));
+      const planning = event(page, "Sprint planning");
+      const sync = event(page, "Quick sync");
+      const long = await box(planning);
+      const short = await box(sync);
+      expect(long.width).toBeGreaterThan(column.width - 8);
+      expect(short.x).toBeGreaterThan(long.x + 8);
+      expect(short.x + short.width).toBeLessThanOrEqual(column.x + column.width);
+      expect(await zIndex(sync)).toBeGreaterThan(await zIndex(planning));
+      // The event on top has an outline in the colour of the ground, so the stack reads.
+      const ring = await sync.evaluate((node) => getComputedStyle(node).boxShadow);
+      expect(ring).not.toBe("none");
+    });
+  });
+}
+
+for (const [width, days] of [
+  [1280, 7],
+  [700, 5],
+  [390, 3],
+]) {
+  test(`a stack three deep at ${String(days)} days: each event sits on the one before, more indented, and stays readable`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await open(page, "xlarge");
+    const column = await box(page.locator(".day-column").nth(0));
+    const stack = ["Design review", "Budget check", "Call with the plumber"].map((title) => event(page, title));
+    const boxes = await Promise.all(stack.map(box));
+    const layers = await Promise.all(stack.map(zIndex));
+    expect(boxes[1].x).toBeGreaterThan(boxes[0].x + 4);
+    expect(boxes[2].x).toBeGreaterThan(boxes[1].x + 4);
+    expect(layers[1]).toBeGreaterThan(layers[0]);
+    expect(layers[2]).toBeGreaterThan(layers[1]);
+    for (const item of boxes) expect(item.width).toBeGreaterThanOrEqual(column.width * 0.45);
+  });
+}
+
+test("the line of now stands above every event, and past events stay dim", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await open(page, "xlarge");
+  const layers = await page
+    .locator(".event")
+    .evaluateAll((nodes) => nodes.map((node) => Number(getComputedStyle(node).zIndex)));
+  expect(await zIndex(page.locator(".now-line"))).toBeGreaterThan(Math.max(...layers));
+  await expect(event(page, "Team standup")).toHaveClass(/is-past/);
+});
+
+test.describe("the details of an event", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+  const tooltip = (page) => page.locator(".tooltip");
+
+  test("hover shows the title, the time span, the calendar, the place and the forecast during it", async ({ page }) => {
+    await open(page, "xlarge");
+    await expect(page.locator(".event[title], .all-day-event[title]")).toHaveCount(0);
+    await event(page, "Sprint planning").hover();
+    await expect(tooltip(page)).toBeVisible();
+    await expect(tooltip(page).locator(".tooltip-title")).toHaveText("Sprint planning");
+    await expect(tooltip(page).locator(".tooltip-when")).toHaveText("Thu 12 Mar · 14:00–15:30 · 1 h 30 min");
+    await expect(tooltip(page).locator(".tooltip-calendar")).toHaveText("Work");
+    await expect(tooltip(page).locator(".tooltip-calendar .event-bar")).toHaveCount(1);
+    await expect(tooltip(page).locator(".tooltip-place")).toHaveText("Room B");
+    await expect(tooltip(page).locator(".tooltip-weather")).toHaveText(/^Light rain · \d+°–\d+° · Rain 60%$/);
+    // The readout of the chart shows too.
+    await expect(page.locator(".grid")).toHaveClass(/is-hovering/);
+    await expect(page.locator(".readout-day")).toHaveText("Thu 12");
+    await page.mouse.move(2, 400);
+    await expect(tooltip(page)).toBeHidden();
+  });
+
+  test("an all-day event shows the low, the high and the chance of rain of its days", async ({ page }) => {
+    await open(page, "xlarge");
+    await page.locator(".all-day-event", { hasText: "Trip to the coast" }).hover();
+    await expect(tooltip(page).locator(".tooltip-when")).toHaveText("Sat 14 – Sun 15 Mar · 2 days");
+    await expect(tooltip(page).locator(".tooltip-weather")).toHaveText("Clear · 9°–18° · Rain 60%");
+  });
+
+  test("focus on an event shows its details, and Escape hides them", async ({ page }) => {
+    await open(page, "xlarge");
+    await event(page, "Deep work").focus();
+    await expect(tooltip(page).locator(".tooltip-title")).toHaveText("Deep work");
+    await expect(event(page, "Deep work")).toHaveAttribute("aria-describedby", "event-tooltip");
+    await page.keyboard.press("Escape");
+    await expect(tooltip(page)).toBeHidden();
+  });
+
+  for (const viewport of [
+    { width: 1280, height: 800 },
+    { width: 700, height: 500 },
+    { width: 390, height: 420 },
+  ]) {
+    test(`stays inside the frame at ${String(viewport.width)} x ${String(viewport.height)}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await open(page, "xlarge");
+      const count = await page.locator(".event, .all-day-event").count();
+      for (let index = 0; index < count; index += 1) {
+        const target = page.locator(".event, .all-day-event").nth(index);
+        if (!(await target.isVisible())) continue;
+        await target.focus();
+        const tip = await box(tooltip(page));
+        expect(tip.x).toBeGreaterThanOrEqual(0);
+        expect(tip.y).toBeGreaterThanOrEqual(0);
+        expect(tip.x + tip.width).toBeLessThanOrEqual(viewport.width);
+        expect(tip.y + tip.height).toBeLessThanOrEqual(viewport.height);
+        // The top right corner stays free for Eva's full-screen button.
+        expect(tip.y >= 56 || tip.x + tip.width <= viewport.width - 56).toBe(true);
+      }
+    });
+  }
+});
+
+test.describe("on a touch screen", () => {
+  test.use({ viewport: { width: 390, height: 700 }, hasTouch: true, isMobile: true });
+
+  test("the first tap shows the details, and a second tap opens the event", async ({ page, context }) => {
+    await context.route("https://calendar.google.com/**", (route) =>
+      route.fulfill({ status: 200, contentType: "text/html", body: "<p>Google Calendar</p>" }),
+    );
+    await open(page, "xlarge");
+    const target = event(page, "Deep work");
+    const opened = [];
+    context.on("page", (other) => opened.push(other));
+    await target.tap();
+    await expect(page.locator(".tooltip .tooltip-title")).toHaveText("Deep work");
+    expect(opened).toHaveLength(0);
+    const popup = context.waitForEvent("page");
+    await target.tap();
+    expect((await popup).url()).toContain("https://calendar.google.com/");
+  });
 });

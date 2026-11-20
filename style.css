@@ -575,10 +575,15 @@ a:focus-visible {
 }
 
 .grid-all-day {
+  grid-template-rows: repeat(var(--lanes, 1), auto);
+  row-gap: 3px;
+  padding: 3px 0;
   border-top: 1px solid var(--line, #d9dce5);
 }
 
 .all-day-label {
+  grid-row: 1 / -1;
+  grid-column: 1;
   display: flex;
   align-items: center;
   padding-left: 6px;
@@ -589,14 +594,17 @@ a:focus-visible {
   text-transform: uppercase;
 }
 
+/* The cells of the days stand behind the bars, under every lane, for the lines between the days. */
 .all-day-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+  grid-row: 1 / -1;
   min-width: 0;
-  min-height: 24px;
-  padding: 3px;
+  min-height: 20px;
+  margin: -3px 0;
   border-left: 1px solid var(--line, #d9dce5);
+}
+
+.all-day-cell.is-today {
+  background: color-mix(in srgb, var(--soft, #e6f0ff) 45%, transparent);
 }
 
 .grid-scroll {
@@ -650,19 +658,46 @@ a:focus-visible {
   background-color: color-mix(in srgb, var(--soft, #e6f0ff) 45%, transparent);
 }
 
+/*
+ * An event is filled with a tint of its calendar's colour: strong enough to tell calendars apart,
+ * light enough for the ink to read on it, in light and in dark. A thin outline in the colour of
+ * the ground parts the events of a stack.
+ */
+.event,
+.all-day-event {
+  --tint: 30%;
+  background: color-mix(in srgb, var(--calendar-colour, var(--accent, #3b82f6)) var(--tint), var(--panel, #ffffff));
+  box-shadow: 0 0 0 1px var(--panel, #ffffff);
+}
+
+@media (prefers-color-scheme: dark) {
+  .event,
+  .all-day-event {
+    --tint: 42%;
+  }
+}
+
 .event {
   position: absolute;
   min-width: 0;
   padding: 3px 5px 3px 11px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--calendar-colour, var(--accent, #3b82f6)) 12%, var(--panel, #ffffff));
-  box-shadow: 0 0 0 1px var(--line, #d9dce5);
+  border-radius: 7px;
   overflow: hidden;
   line-height: 1.25;
 }
 
-.event:hover {
-  box-shadow: 0 0 0 1px var(--calendar-colour, var(--accent, #3b82f6));
+.event.is-stacked {
+  box-shadow:
+    0 0 0 1.5px var(--panel, #ffffff),
+    0 1px 4px color-mix(in srgb, var(--ink, #1f2430) 22%, transparent);
+}
+
+.event:hover,
+.all-day-event:hover,
+.event:focus-visible,
+.all-day-event:focus-visible {
+  outline: 2px solid var(--calendar-colour, var(--accent, #3b82f6));
+  outline-offset: 0;
 }
 
 .event-title {
@@ -681,7 +716,7 @@ a:focus-visible {
 .event-place {
   display: block;
   overflow: hidden;
-  color: var(--muted, #5d6475);
+  color: color-mix(in srgb, var(--ink, #1f2430) 72%, transparent);
   font-family: var(--mono);
   font-size: 10.5px;
   white-space: nowrap;
@@ -704,26 +739,52 @@ a:focus-visible {
   display: none;
 }
 
-.event.is-past {
-  background: var(--chip, #eef0f5);
+.event.is-past,
+.all-day-event.is-past {
+  background: color-mix(in srgb, var(--calendar-colour, var(--accent, #3b82f6)) 8%, var(--chip, #eef0f5));
   color: var(--muted, #5d6475);
 }
 
-.event.is-past .event-bar {
+.event.is-past .event-time,
+.event.is-past .event-place {
+  color: var(--muted, #5d6475);
+}
+
+.event.is-past .event-bar,
+.all-day-event.is-past .event-bar {
   opacity: 0.5;
 }
 
 .all-day-event {
   position: relative;
+  z-index: 1;
+  min-width: 0;
+  margin: 0 3px;
   padding: 2px 5px 2px 11px;
   border-radius: 6px;
+  overflow: hidden;
+  line-height: 1.25;
 }
 
+/* A bar that runs on before or after the shown days has a flat end there. */
+.all-day-event.is-cut-start {
+  margin-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.all-day-event.is-cut-end {
+  margin-right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+/* The line of now stands above every event of a stack. */
 .now-line {
   position: absolute;
   right: 0;
   left: 0;
-  z-index: 2;
+  z-index: 60;
   height: 0;
   border-top: 2px solid var(--accent, #3b82f6);
   pointer-events: none;
@@ -744,7 +805,7 @@ a:focus-visible {
   position: absolute;
   right: 0;
   left: var(--axis);
-  z-index: 2;
+  z-index: 59;
   display: none;
   height: 0;
   border-top: 1px dashed var(--ink, #1f2430);
@@ -803,4 +864,80 @@ a:focus-visible {
 
 .credit {
   text-decoration: underline;
+}
+
+/* --- The details of an event: inverted, as Eva's tooltip ------------------------------------------ */
+
+.tooltip {
+  position: fixed;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: max-content;
+  max-width: min(280px, calc(100vw - 8px));
+  max-height: calc(100vh - 8px);
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--ink, #1f2430);
+  color: var(--bg, #f5f6fa);
+  box-shadow: 0 4px 14px color-mix(in srgb, #000000 28%, transparent);
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.3;
+  pointer-events: none;
+  animation: tooltip-in var(--dur-fast, 150ms) var(--ease-out, ease-out);
+}
+
+.tooltip[hidden] {
+  display: none;
+}
+
+@keyframes tooltip-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.tooltip-title {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.tooltip-when,
+.tooltip-place,
+.tooltip-weather,
+.tooltip-calendar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: color-mix(in srgb, var(--bg, #f5f6fa) 82%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.tooltip-when {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.tooltip-calendar .legend-swatch {
+  flex: none;
+}
+
+/* The icons of the sky keep their colours; their outlines turn to the colour of the text. */
+.tooltip .icon-cloud {
+  fill: color-mix(in srgb, var(--bg, #f5f6fa) 25%, transparent);
+  stroke: var(--bg, #f5f6fa);
+}
+
+.tooltip .icon-moon,
+.tooltip .icon-fog {
+  fill: var(--bg, #f5f6fa);
+  stroke: var(--bg, #f5f6fa);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tooltip {
+    animation: none;
+  }
 }

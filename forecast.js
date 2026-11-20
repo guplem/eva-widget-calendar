@@ -4,6 +4,8 @@
 // Open-Meteo gives each time in the time zone of the place, as `2026-03-10T13:00`, with no offset.
 // The widget reads the day and the hour from that text.
 
+import { addDays, dayOf, hoursOf } from "./calendar.js";
+
 export const forecastHost = "https://api.open-meteo.com";
 export const airQualityHost = "https://air-quality-api.open-meteo.com";
 
@@ -64,7 +66,7 @@ export function forecastUrl(point, unit = "celsius") {
   const query = new URLSearchParams({
     ...place(point),
     current: "temperature_2m,weather_code,is_day",
-    hourly: "temperature_2m,precipitation_probability",
+    hourly: "temperature_2m,precipitation_probability,weather_code",
     daily: "weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max",
     timezone: "auto",
     forecast_days: "7",
@@ -99,7 +101,7 @@ export function hourOf(time) {
  * The forecast of an Open-Meteo answer: `{ now, days }`, or null when it holds no forecast.
  * `now` is `{ temperature, code, isDay }` or null. `days` maps each day to
  * `{ date, code, high, low, sunrise, sunset, uv, hours }`: sunrise and sunset in hours, and
- * `hours` with 24 `{ temperature, rain }`, where a missing value is null.
+ * `hours` with 24 `{ temperature, rain, code }`, where a missing value is null.
  */
 export function readForecast(body) {
   const daily = body?.daily;
@@ -115,17 +117,22 @@ export function readForecast(body) {
       sunrise: hourOf(list(daily, "sunrise")[index]),
       sunset: hourOf(list(daily, "sunset")[index]),
       uv: number(list(daily, "uv_index_max")[index]),
-      hours: Array.from({ length: 24 }, () => ({ temperature: null, rain: null })),
+      hours: Array.from({ length: 24 }, () => ({ temperature: null, rain: null, code: null })),
     });
   });
   const hourly = body?.hourly;
   const temperatures = list(hourly, "temperature_2m");
   const rain = list(hourly, "precipitation_probability");
+  const codes = list(hourly, "weather_code");
   list(hourly, "time").forEach((time, index) => {
     const day = days.get(typeof time === "string" ? time.slice(0, 10) : "");
     const hour = hourOf(time);
     if (day === undefined || hour === null) return;
-    day.hours[Math.floor(hour)] = { temperature: number(temperatures[index]), rain: number(rain[index]) };
+    day.hours[Math.floor(hour)] = {
+      temperature: number(temperatures[index]),
+      rain: number(rain[index]),
+      code: number(codes[index]),
+    };
   });
   const current = body?.current;
   const now =
@@ -153,6 +160,77 @@ export function weatherAt(day, hours) {
       ? here.temperature + (next.temperature - here.temperature) * share
       : here.temperature;
   return { temperature, rain: here.rain };
+}
+
+/**
+ * A summary of values: `{ low, high, rain, code }`, where `code` is the worst sky (the highest WMO
+ * code, such as rain over clouds), or null when no temperature is known.
+ */
+function summary(temperatures, rains, codes) {
+  const known = temperatures.filter((value) => typeof value === "number");
+  if (known.length === 0) return null;
+  const rain = rains.filter((value) => typeof value === "number");
+  const code = codes.filter((value) => typeof value === "number");
+  return {
+    low: Math.min(...known),
+    high: Math.max(...known),
+    rain: rain.length === 0 ? null : Math.max(...rain),
+    code: code.length === 0 ? null : Math.max(...code),
+  };
+}
+
+/**
+ * The weather during a timed event, from `start` to `end`, for its details: the lowest and the
+ * highest temperature (at its start, at its end, and at each full hour between), the highest
+ * chance of rain and the worst sky of the hours that it touches. A day with no sky for each hour
+ * gives its own sky. Null when the forecast has no day of the event.
+ */
+export function weatherBetween(forecast, start, end) {
+  if (forecast === null || forecast === undefined) return null;
+  const temperatures = [];
+  const rains = [];
+  const codes = [];
+  const lastDay = dayOf(end);
+  for (let day = dayOf(start); day <= lastDay; day = addDays(day, 1)) {
+    const weather = forecast.days.get(day);
+    if (weather === undefined) continue;
+    const from = day === dayOf(start) ? hoursOf(start) : 0;
+    const to = day === lastDay ? hoursOf(end) : 24;
+    if (to <= from && day !== dayOf(start)) continue;
+    const next = forecast.days.get(addDays(day, 1));
+    const at = (hours) =>
+      hours >= 24
+        ? (next?.hours[0]?.temperature ?? weather.hours[23].temperature)
+        : weatherAt(weather, hours).temperature;
+    temperatures.push(at(from), at(to));
+    for (let hour = Math.floor(from) + 1; hour < to && hour < 24; hour += 1)
+      temperatures.push(weather.hours[hour].temperature);
+    for (let hour = Math.floor(from); hour < Math.max(Math.ceil(to), Math.floor(from) + 1) && hour < 24; hour += 1) {
+      rains.push(weather.hours[hour].rain);
+      codes.push(weather.hours[hour].code ?? number(weather.code));
+    }
+  }
+  return summary(temperatures, rains, codes);
+}
+
+/**
+ * The weather of the days of an all-day event, from `first` to `last`: the lowest low, the highest
+ * high, the highest chance of rain of their hours, and the worst sky of the days. Null when the
+ * forecast has none of these days.
+ */
+export function weatherOfDays(forecast, first, last) {
+  if (forecast === null || forecast === undefined) return null;
+  const temperatures = [];
+  const rains = [];
+  const codes = [];
+  for (let day = first; day <= last; day = addDays(day, 1)) {
+    const weather = forecast.days.get(day);
+    if (weather === undefined) continue;
+    temperatures.push(weather.low, weather.high);
+    rains.push(...weather.hours.map((hour) => hour.rain));
+    codes.push(number(weather.code));
+  }
+  return summary(temperatures, rains, codes);
 }
 
 /**

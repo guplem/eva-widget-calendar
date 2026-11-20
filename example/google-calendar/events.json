@@ -12,9 +12,27 @@
     "id": "example-2",
     "calendarId": "work@example.com",
     "title": "Design review",
-    "startAt": "2026-01-01T10:30:00",
-    "endAt": "2026-01-01T11:30:00",
+    "startAt": "2026-01-01T10:00:00",
+    "endAt": "2026-01-01T12:45:00",
     "place": "Room B",
+    "link": "https://calendar.google.com/calendar/"
+  },
+  {
+    "id": "example-29",
+    "calendarId": "work@example.com",
+    "title": "Budget check",
+    "startAt": "2026-01-01T11:00:00",
+    "endAt": "2026-01-01T12:30:00",
+    "place": null,
+    "link": "https://calendar.google.com/calendar/"
+  },
+  {
+    "id": "example-30",
+    "calendarId": "personal@example.com",
+    "title": "Call with the plumber",
+    "startAt": "2026-01-01T12:00:00",
+    "endAt": "2026-01-01T12:40:00",
+    "place": null,
     "link": "https://calendar.google.com/calendar/"
   },
   {
@@ -75,8 +93,17 @@
     "id": "example-9",
     "calendarId": "work@example.com",
     "title": "Quick sync",
-    "startAt": "2026-01-02T14:30:00",
-    "endAt": "2026-01-02T15:00:00",
+    "startAt": "2026-01-02T14:45:00",
+    "endAt": "2026-01-02T15:15:00",
+    "place": null,
+    "link": "https://calendar.google.com/calendar/"
+  },
+  {
+    "id": "example-27",
+    "calendarId": "personal@example.com",
+    "title": "",
+    "startAt": "2026-01-02T16:00:00",
+    "endAt": "2026-01-02T16:30:00",
     "place": null,
     "link": "https://calendar.google.com/calendar/"
   },
@@ -87,6 +114,15 @@
     "startAt": "2026-01-02T17:00:00",
     "endAt": "2026-01-02T18:30:00",
     "place": "School hall",
+    "link": "https://calendar.google.com/calendar/"
+  },
+  {
+    "id": "example-26",
+    "calendarId": "work@example.com",
+    "title": "Offsite day",
+    "startAt": "2026-01-03T00:00:00",
+    "endAt": "2026-01-04T00:00:00",
+    "place": null,
     "link": "https://calendar.google.com/calendar/"
   },
   {
@@ -114,6 +150,15 @@
     "startAt": "2026-01-03T13:00:00",
     "endAt": "2026-01-03T13:30:00",
     "place": null,
+    "link": "https://calendar.google.com/calendar/"
+  },
+  {
+    "id": "example-28",
+    "calendarId": "work@example.com",
+    "title": "Interview",
+    "startAt": "2026-01-03T13:00:00",
+    "endAt": "2026-01-03T14:00:00",
+    "place": "Room A",
     "link": "https://calendar.google.com/calendar/"
   },
   {
@@ -222,6 +267,15 @@
     "startAt": "2026-01-07T17:00:00",
     "endAt": "2026-01-07T18:00:00",
     "place": "Pool",
+    "link": "https://calendar.google.com/calendar/"
+  },
+  {
+    "id": "example-31",
+    "calendarId": "personal@example.com",
+    "title": "Night flight",
+    "startAt": "2026-01-07T23:00:00",
+    "endAt": "2026-01-08T01:30:00",
+    "place": "Airport",
     "link": "https://calendar.google.com/calendar/"
   }
 ]

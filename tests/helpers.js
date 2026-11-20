@@ -17,19 +17,23 @@ const codes = [2, 61, 3, 0, 0, 2, 63];
 
 /**
  * A made-up Open-Meteo answer for 7 days from `first`: a mild day curve, rain in the afternoon of
- * some days, and the sun up from 07:12 to 18:51.
+ * some days, with light rain as the sky of those hours, and the sun up from 07:12 to 18:51.
  */
 export function forecastFor(first = testToday) {
   const days = Array.from({ length: 7 }, (_, index) => addDays(first, index));
   const time = [];
   const temperature = [];
   const rain = [];
+  const sky = [];
   days.forEach((day, index) => {
     for (let hour = 0; hour < 24; hour += 1) {
       time.push(`${day}T${String(hour).padStart(2, "0")}:00`);
       const curve = Math.max(0, Math.sin((Math.PI * (hour - 6)) / 16));
       temperature.push(Math.round((7 + index * 0.5 + 9 * curve) * 10) / 10);
-      rain.push(index % 3 === 1 && hour >= 13 && hour < 20 ? 60 : index === 0 && hour >= 17 ? 35 : 0);
+      const chance = index % 3 === 1 && hour >= 13 && hour < 20 ? 60 : index === 0 && hour >= 17 ? 35 : 0;
+      rain.push(chance);
+      // A rainy hour has light rain; the others have the sky of their day.
+      sky.push(chance > 0 ? 61 : codes[index]);
     }
   });
   return {
@@ -37,7 +41,7 @@ export function forecastFor(first = testToday) {
     longitude: 2.29,
     timezone: "UTC",
     current: { time: `${first}T14:15`, temperature_2m: 14.2, weather_code: 2, is_day: 1 },
-    hourly: { time, temperature_2m: temperature, precipitation_probability: rain },
+    hourly: { time, temperature_2m: temperature, precipitation_probability: rain, weather_code: sky },
     daily: {
       time: days,
       weather_code: codes,
