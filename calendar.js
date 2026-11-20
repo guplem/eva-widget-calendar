@@ -79,10 +79,31 @@ export function safeLink(value) {
   }
 }
 
+/** The title of an event with no title: Google Calendar shows such an event as busy time. */
+export const noTitle = "Busy";
+
+function isMidnight(date) {
+  return date.getHours() === 0 && date.getMinutes() === 0 && date.getSeconds() === 0 && date.getMilliseconds() === 0;
+}
+
+/**
+ * Whether a timed event covers whole days, so it belongs in the all-day row as Google Calendar
+ * shows it: it runs from a midnight to a later midnight (one day or more, also over a clock
+ * change), or it lasts 24 hours or more. An event that only crosses midnight, such as 22:00 to
+ * 02:00, stays in the time grid.
+ */
+export function isWholeDay(start, end) {
+  if (end <= start) return false;
+  return (isMidnight(start) && isMidnight(end)) || end.getTime() - start.getTime() >= 24 * hourMs;
+}
+
 /**
  * The events of `events.json`, or null for Eva's `null` answer. A timed event gets `start` and
- * `end` as dates; an all-day event gets `allDay: true` with `date` and `endDate`. An event that a
- * person or a tool wrote with fewer fields is kept when it can be shown, and dropped otherwise.
+ * `end` as dates; an all-day event gets `allDay: true` with `date` and `endDate`. A timed event
+ * that covers whole days (see `isWholeDay`) becomes an all-day event too: from midnight to
+ * midnight it is one like Google's, and one of 24 hours or more keeps its `start` and `end`. An
+ * event that a person or a tool wrote with fewer fields is kept when it can be shown, and dropped
+ * otherwise.
  */
 export function readEvents(value) {
   if (!Array.isArray(value)) return null;
@@ -92,7 +113,7 @@ export function readEvents(value) {
     const base = {
       id: typeof item.id === "string" ? item.id : "",
       calendarId: typeof item.calendarId === "string" ? item.calendarId : "",
-      title: typeof item.title === "string" && item.title.trim() !== "" ? item.title : "(No title)",
+      title: typeof item.title === "string" && item.title.trim() !== "" ? item.title : noTitle,
       place: typeof item.place === "string" && item.place !== "" ? item.place : null,
       link: safeLink(item.link),
     };
@@ -106,6 +127,13 @@ export function readEvents(value) {
     if (Number.isNaN(start.getTime())) continue;
     // An event with no end, or an end before its start, shows as a short event.
     const safeEnd = Number.isNaN(end.getTime()) || end <= start ? new Date(start.getTime() + 30 * minuteMs) : end;
+    if (isWholeDay(start, safeEnd)) {
+      const days = { allDay: true, date: dayOf(start), endDate: dayOf(new Date(safeEnd.getTime() - 1)) };
+      events.push(
+        isMidnight(start) && isMidnight(safeEnd) ? { ...base, ...days } : { ...base, ...days, start, end: safeEnd },
+      );
+      continue;
+    }
     events.push({ ...base, allDay: false, start, end: safeEnd });
   }
   return events.sort((a, b) => sortKey(a) - sortKey(b));
@@ -113,6 +141,46 @@ export function readEvents(value) {
 
 function sortKey(event) {
   return event.allDay ? startOfDay(event.date).getTime() : event.start.getTime();
+}
+
+/**
+ * The bars of the all-day row over the shown `days`: one bar for each all-day event, from its
+ * first shown day to its last, in the first lane that is free on those days. Returns
+ * `{ bars, lanes }`; each bar is `{ event, first, last, lane, cutStart, cutEnd }`, where `first`
+ * and `last` are indexes of `days`, and `cutStart` and `cutEnd` say that the event runs on before
+ * or after the shown days.
+ */
+export function allDayLanes(events, days) {
+  const firstDay = days[0];
+  const lastDay = days[days.length - 1];
+  const bars = events
+    .filter((event) => event.allDay && event.date <= lastDay && event.endDate >= firstDay)
+    .map((event) => ({
+      event,
+      first: Math.max(0, daysBetween(firstDay, event.date)),
+      last: Math.min(days.length - 1, daysBetween(firstDay, event.endDate)),
+      cutStart: event.date < firstDay,
+      cutEnd: event.endDate > lastDay,
+    }))
+    .sort((a, b) => a.first - b.first || b.last - a.last);
+  const laneEnds = [];
+  for (const bar of bars) {
+    let lane = laneEnds.findIndex((end) => end < bar.first);
+    if (lane < 0) lane = laneEnds.length;
+    laneEnds[lane] = bar.last;
+    bar.lane = lane;
+  }
+  return {
+    bars: bars.map(({ event, first, last, lane, cutStart, cutEnd }) => ({
+      event,
+      first,
+      last,
+      lane,
+      cutStart,
+      cutEnd,
+    })),
+    lanes: laneEnds.length,
+  };
 }
 
 /**
@@ -158,36 +226,66 @@ export function partsOn(events, day) {
 }
 
 /**
- * Places the parts of one day side by side where they overlap, as a calendar does. Each part gets
- * `column` and `columns`: the parts of one group of overlaps share the width of the day.
+ * Stacks the parts of one day where they overlap, in the spirit of Google Calendar. Each part gets
+ * `left` and `width`, as shares of the day's width, and `depth`, its layer: a higher depth draws on
+ * top.
+ *
+ * - The parts go in order of start, the longer first.
+ * - A part that overlaps no earlier part keeps the whole width.
+ * - A part that starts less than `together` hours after the start of the group that it overlaps
+ *   (the top one, where several do) joins that group: the parts of a group share its width side by
+ *   side, the earlier first.
+ * - A later part sits on top of the part that it overlaps, on the next layer, indented by `indent`
+ *   from that part's left and running to the right edge of that part's group. The earlier part
+ *   keeps its width, so its title, at its top, stays in view.
+ * - No part on top gets narrower than `minWidth`: its indent shrinks instead.
  */
-export function layoutParts(parts) {
+export function layoutParts(parts, { together = 0.5, indent = 0.2, minWidth = 0.5 } = {}) {
   const sorted = [...parts].sort((a, b) => a.from - b.from || b.to - a.to);
+  const groups = [];
   const placed = [];
-  let group = [];
-  let groupEnd = -1;
-  const close = () => {
-    const columnEnds = [];
-    for (const part of group) {
-      let column = columnEnds.findIndex((end) => end <= part.from);
-      if (column < 0) {
-        column = columnEnds.length;
-        columnEnds.push(0);
-      }
-      columnEnds[column] = part.to;
-      placed.push({ ...part, column });
-    }
-    for (const part of placed.slice(placed.length - group.length)) part.columns = columnEnds.length;
-    group = [];
-    groupEnd = -1;
-  };
   for (const part of sorted) {
-    if (group.length > 0 && part.from >= groupEnd) close();
-    group.push(part);
-    groupEnd = Math.max(groupEnd, part.to);
+    let top = null;
+    for (const item of placed) {
+      if (item.part.from >= part.to || part.from >= item.part.to) continue;
+      if (
+        top === null ||
+        item.group.depth > top.group.depth ||
+        (item.group.depth === top.group.depth && item.part.from >= top.part.from)
+      )
+        top = item;
+    }
+    let group;
+    if (top === null) {
+      group = { start: part.from, depth: 0, parent: null, members: [] };
+      groups.push(group);
+    } else if (part.from - top.group.start < together) {
+      group = top.group;
+    } else {
+      group = { start: part.from, depth: top.group.depth + 1, parent: top, members: [] };
+      groups.push(group);
+    }
+    const item = { part, group };
+    group.members.push(item);
+    placed.push(item);
   }
-  if (group.length > 0) close();
-  return placed;
+  // A group's parent comes before it, so its place is known in time.
+  for (const group of groups) {
+    if (group.parent === null) {
+      group.left = 0;
+      group.right = 1;
+    } else {
+      const { parent } = group;
+      group.right = parent.group.right;
+      group.left = Math.max(parent.left, Math.min(parent.left + indent, group.right - minWidth));
+    }
+    const width = (group.right - group.left) / group.members.length;
+    group.members.forEach((item, index) => {
+      item.left = group.left + index * width;
+      item.width = width;
+    });
+  }
+  return placed.map((item) => ({ ...item.part, left: item.left, width: item.width, depth: item.group.depth }));
 }
 
 /**
@@ -276,4 +374,82 @@ export function rangeLabel(first, last) {
       ? `${start.weekday} ${String(start.date)}`
       : `${start.weekday} ${String(start.date)} ${start.month}`;
   return `${startText} – ${end.weekday} ${String(end.date)} ${end.month}`;
+}
+
+/** A duration as the details of an event say it: "45 min", "1 h 30 min", "2 days", "1 day 4 h". */
+export function durationText(milliseconds) {
+  const minutes = Math.round(milliseconds / minuteMs);
+  if (minutes < 60) return `${String(minutes)} min`;
+  if (minutes < 24 * 60) {
+    const hours = Math.floor(minutes / 60);
+    const rest = minutes % 60;
+    return rest === 0 ? `${String(hours)} h` : `${String(hours)} h ${String(rest)} min`;
+  }
+  const days = Math.floor(minutes / (24 * 60));
+  const hours = Math.round((minutes % (24 * 60)) / 60);
+  const dayText = days === 1 ? "1 day" : `${String(days)} days`;
+  return hours === 0 ? dayText : `${dayText} ${String(hours)} h`;
+}
+
+function fullDay(day) {
+  const name = dayName(day, day);
+  return `${name.weekday} ${String(name.date)} ${name.month}`;
+}
+
+/**
+ * The day and the time span of an event, with its duration, as its details show them:
+ * "Wed 11 Mar · 15:00–17:00 · 2 h", "Wed 11 Mar 22:00 – Thu 12 Mar 02:00 · 4 h",
+ * "Sat 14 Mar · All day" or "Sat 14 – Sun 15 Mar · 2 days".
+ */
+export function whenText(event) {
+  if (event.start !== undefined) {
+    const first = dayOf(event.start);
+    const last = dayOf(event.end);
+    const duration = durationText(event.end.getTime() - event.start.getTime());
+    if (first === last) return `${fullDay(first)} · ${clockOf(event.start)}–${clockOf(event.end)} · ${duration}`;
+    return `${fullDay(first)} ${clockOf(event.start)} – ${fullDay(last)} ${clockOf(event.end)} · ${duration}`;
+  }
+  if (event.date === event.endDate) return `${fullDay(event.date)} · All day`;
+  const days = daysBetween(event.date, event.endDate) + 1;
+  return `${rangeLabel(event.date, event.endDate)} · ${String(days)} days`;
+}
+
+/**
+ * Where the details of an event show, inside the frame: above the event, else below it, else
+ * beside it (right, then left), else over it, as `{ left, top, side }` in pixels from the top left
+ * of the frame. `anchor` is the event's box `{ left, top, right, bottom }`, `size` the tooltip's
+ * `{ width, height }` and `frame` the widget's `{ width, height }`. The top right `corner` stays
+ * free for Eva's full-screen button: a tooltip there moves left, or else down.
+ */
+export function tooltipPosition(anchor, size, frame, { gap = 6, margin = 4, corner = 56 } = {}) {
+  const clamp = (value, low, high) => Math.max(low, Math.min(value, high));
+  const maxLeft = frame.width - size.width - margin;
+  const maxTop = frame.height - size.height - margin;
+  let left = clamp((anchor.left + anchor.right) / 2 - size.width / 2, margin, maxLeft);
+  let top;
+  let side;
+  if (anchor.top - gap - size.height >= margin) {
+    top = anchor.top - gap - size.height;
+    side = "above";
+  } else if (anchor.bottom + gap + size.height <= frame.height - margin) {
+    top = anchor.bottom + gap;
+    side = "below";
+  } else {
+    top = clamp(anchor.top, margin, maxTop);
+    if (anchor.right + gap + size.width <= frame.width - margin) {
+      left = anchor.right + gap;
+      side = "right";
+    } else if (anchor.left - gap - size.width >= margin) {
+      left = anchor.left - gap - size.width;
+      side = "left";
+    } else {
+      top = clamp(anchor.top + gap, margin, maxTop);
+      side = "inside";
+    }
+  }
+  if (top < corner && left + size.width > frame.width - corner) {
+    if (frame.width - corner - size.width >= margin) left = frame.width - corner - size.width;
+    else if (corner + size.height <= frame.height - margin) top = corner;
+  }
+  return { left: Math.max(margin, left), top: Math.max(margin, top), side };
 }
