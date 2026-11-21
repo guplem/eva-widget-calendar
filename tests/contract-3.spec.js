@@ -211,7 +211,7 @@ test.describe("the menu of an event", () => {
     await expect.poll(async () => (await asked(page)).map((message) => message.ask)).toContain("hello");
     await event(frame, "Sprint planning").click();
     await expect(items(frame)).toHaveText([
-      "Open a chat about this event",
+      "Start a chat about this event",
       "Open the project",
       "See in Google Calendar",
     ]);
@@ -238,14 +238,14 @@ test.describe("the menu of an event", () => {
   test("an event with no project has no project entry", async ({ page }) => {
     const frame = await openInEva(page, "xlarge");
     await event(frame, "Dentist").click();
-    await expect(items(frame)).toHaveText(["Open a chat about this event", "See in Google Calendar"]);
+    await expect(items(frame)).toHaveText(["Start a chat about this event", "See in Google Calendar"]);
   });
 
   test("an ask that Eva did not approve has no entry", async ({ page }) => {
     const frame = await openInEva(page, "xlarge", { asks: ["chat"] });
     await expect.poll(async () => (await asked(page)).length).toBeGreaterThan(0);
     await event(frame, "Sprint planning").click();
-    await expect(items(frame)).toHaveText(["Open a chat about this event", "See in Google Calendar"]);
+    await expect(items(frame)).toHaveText(["Start a chat about this event", "See in Google Calendar"]);
   });
 
   test("with no answer to hello, the entries that need Eva hide", async ({ page }) => {
@@ -260,9 +260,9 @@ test.describe("the menu of an event", () => {
     await event(frame, "Sprint planning").click();
     await menu(frame).getByRole("menuitem", { name: "Open the project" }).click();
     await expect(menu(frame).locator(".menu-status")).toHaveText("Eva could not open it. Try again.");
-    await menu(frame).getByRole("menuitem", { name: "Open a chat about this event" }).click();
+    await menu(frame).getByRole("menuitem", { name: "Start a chat about this event" }).click();
     await expect(menu(frame).locator(".menu-status")).toHaveText("Eva does not allow this widget to do that.");
-    await expect(menu(frame).getByRole("menuitem", { name: "Open a chat about this event" })).toHaveCount(0);
+    await expect(menu(frame).getByRole("menuitem", { name: "Start a chat about this event" })).toHaveCount(0);
   });
 
   test("the keyboard opens the menu with Enter, moves with the arrows, and Escape gives the focus back", async ({

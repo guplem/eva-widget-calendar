@@ -140,7 +140,7 @@ test("the menu of an event offers what Eva approved, the project when there is o
   assert.deepEqual(kinds(bare, []), []);
   assert.deepEqual(
     menuEntries(full, new Set(["chat", "open"])).map((entry) => entry.label),
-    ["Open a chat about this event", "Open the project", "See in Google Calendar"],
+    ["Start a chat about this event", "Open the project", "See in Google Calendar"],
   );
 });
 

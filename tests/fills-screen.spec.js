@@ -47,3 +47,41 @@ for (const size of ["small", "medium", "large", "tall", "xlarge", "full", "heade
     });
   }
 }
+
+// The real cards of Eva's home page: the header slot beside the greeting, and a small grid card.
+for (const viewport of [
+  { width: 330, height: 72 },
+  { width: 536, height: 72 },
+  { width: 640, height: 72 },
+]) {
+  test(`header at ${String(viewport.width)} x ${String(viewport.height)} shows each line of the next event whole`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    await page.goto("/?size=header");
+    await expect(page.locator(".widget")).toHaveAttribute("data-ready", "true");
+    await expect(page.locator(".small-next").first()).toBeVisible();
+    for (const part of [".small-when", ".small-title", ".small-time"]) {
+      const cut = await page
+        .locator(part)
+        .first()
+        .evaluate((node) => node.scrollHeight - node.clientHeight);
+      expect(cut, part).toBeLessThanOrEqual(1);
+    }
+    // The text box of the event ends inside the frame, under no line of another part.
+    const next = await page.locator(".small-next").first().boundingBox();
+    const lines = await page
+      .locator(".small-next > *")
+      .evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().bottom));
+    for (const bottom of lines) expect(bottom).toBeLessThanOrEqual(next.y + next.height + 0.5);
+  });
+}
+
+test("small at 203 x 150 keeps the top right corner free for Eva's full-screen button", async ({ page }) => {
+  await page.setViewportSize({ width: 203, height: 150 });
+  await page.goto("/?size=small");
+  await expect(page.locator(".widget")).toHaveAttribute("data-ready", "true");
+  await expect(page.locator(".small-next").first()).toBeVisible();
+  const next = await page.locator(".small-next").first().boundingBox();
+  expect(next.y >= 56 || next.x + next.width <= 203 - 56).toBe(true);
+});

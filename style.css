@@ -1221,6 +1221,9 @@ button:focus-visible {
   justify-content: center;
   align-self: stretch;
   min-width: 0;
+  /* Three lines in a 72 px strip: less padding and gap, so the title keeps its descenders. */
+  gap: 1px;
+  padding-block: 3px;
 }
 
 .widget[data-size="header"] .small-title {
@@ -1240,4 +1243,9 @@ button:focus-visible {
 
 .widget[data-size="header"] .small-temperature {
   font-size: 22px;
+}
+
+/* A small card keeps its top right corner free for Eva's full-screen button. */
+.widget[data-size="small"] .small-next {
+  margin-right: calc(56px - var(--gap));
 }
