@@ -18,7 +18,7 @@ const viewports = [
   { width: 1920, height: 1080 },
 ];
 
-for (const size of ["small", "medium", "large", "tall", "xlarge", "full"]) {
+for (const size of ["small", "medium", "large", "tall", "xlarge", "full", "header"]) {
   for (const viewport of viewports) {
     test(`size ${size} fills ${String(viewport.width)} x ${String(viewport.height)}`, async ({ page }) => {
       await page.setViewportSize(viewport);

@@ -1,13 +1,16 @@
-// The Calendar widget. It talks to its host only through fetch to relative paths, and to the hosts of
-// its manifest, Open-Meteo. Inside Eva, eva/google-calendar/ answers with the person's calendar and
-// eva/location.json with the last location. On GitHub Pages, these paths do not exist, so the mock
-// files under example/ answer. See the contract: https://github.com/guplem/eva/blob/main/docs/widgets.md
+// The Calendar widget. It talks to its host through fetch to relative paths, to the hosts of its
+// manifest, Open-Meteo, and through the asks of contract 3 (postMessage to its parent). Inside Eva,
+// eva/google-calendar/ answers with the person's calendar, eva/location.json with the last location
+// and eva/state.json with the widget's own state. On GitHub Pages, these paths do not exist, so the
+// mock files under example/ answer, the state stays in memory and no ask gets an answer. See the
+// contract: https://github.com/guplem/eva/blob/main/docs/widgets.md
 //
 // calendar.js and forecast.js hold the logic. This file loads the data and draws it.
 import {
   addDays,
   allDayLanes,
   allDayOn,
+  chatText,
   clock,
   clockOf,
   dayName,
@@ -18,14 +21,20 @@ import {
   hourRange,
   hoursOf,
   layoutParts,
+  menuEntries,
+  menuPosition,
   moveExample,
   nextEvent,
   partsOn,
   rangeLabel,
   readCalendars,
   readEvents,
+  readHiddenCalendars,
+  titleFilter,
+  toggleCalendar,
   tooltipPosition,
   untilText,
+  visibleEvents,
   whenText,
 } from "./calendar.js";
 import {
@@ -43,7 +52,7 @@ import {
   weatherOfDays,
 } from "./forecast.js";
 
-const sizes = ["small", "medium", "large", "tall", "xlarge", "full"];
+const sizes = ["small", "medium", "large", "tall", "xlarge", "full", "header"];
 /** The first day of the mock events: the demo moves it to today. */
 const exampleAnchor = "2026-01-01";
 const windowDays = 7;
@@ -52,6 +61,9 @@ const locationTimeoutMs = 8000;
 const calendarRefreshMs = 5 * 60_000;
 const weatherRefreshMs = 30 * 60_000;
 const tickMs = 60_000;
+/** How long the widget waits for Eva's answer to hello: outside Eva no answer comes. */
+const helloWaitMs = 400;
+const askWaitMs = 5000;
 const svgSpace = "http://www.w3.org/2000/svg";
 const noCalendar = "Your calendar did not load. The widget tries again in a few minutes.";
 
@@ -65,6 +77,16 @@ const state = {
   calendar: "loading",
   calendars: new Map(),
   events: [],
+  /** The events that show: none of a hidden calendar, and none with a title that hideTitles hides. */
+  shown: [],
+  /** The ids of the hidden calendars. */
+  hidden: [],
+  /** The widget's state of eva/state.json, or null outside Eva, where it stays in memory. */
+  saved: null,
+  /** The test of the hideTitles input, or null. */
+  hideTitle: null,
+  /** The asks that Eva approved, from her answer to hello: empty outside Eva. */
+  asks: new Set(),
   /** none (no location), ready or failed. */
   weather: "none",
   forecast: null,
@@ -73,6 +95,9 @@ const state = {
 };
 let calendarTimer = 0;
 let drawFrame = 0;
+let saving = 0;
+/** Counts the taps on the legend, so a read that started before a tap does not undo it. */
+let stateChanges = 0;
 
 // --- Loading -------------------------------------------------------------------------------------
 
@@ -107,6 +132,7 @@ async function loadCalendar() {
   const [calendars, events] = await Promise.all([
     readCalendarPath("calendars.json"),
     readCalendarPath("events.json", query),
+    loadState(),
   ]);
   // A new day starts here, also when the load fails, so the minute tick does not ask again each minute.
   state.today = today;
@@ -127,6 +153,99 @@ async function loadCalendar() {
   state.calendars = new Map(list.map((calendar) => [calendar.id, calendar]));
   state.events = found;
   state.calendar = "ready";
+}
+
+/**
+ * The widget's own state in Eva, which every device shares: the hidden calendars. Outside Eva the
+ * path answers 404, and the state stays in memory. A save on its way wins over a read.
+ */
+async function loadState() {
+  const changes = stateChanges;
+  const answer = await request("eva/state.json");
+  const body = answer.body;
+  if (answer.status !== 200 || typeof body !== "object" || body === null || Array.isArray(body)) return;
+  if (saving > 0 || changes !== stateChanges) return;
+  state.saved = body;
+  state.hidden = readHiddenCalendars(body);
+}
+
+/** Saves the hidden calendars in Eva, with the other keys of the state as they were. */
+async function saveState() {
+  if (state.saved === null) return;
+  state.saved = { ...state.saved, hiddenCalendars: state.hidden };
+  saving += 1;
+  try {
+    await fetch("eva/state.json", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(state.saved),
+      signal: AbortSignal.timeout(requestTimeoutMs),
+    });
+  } catch {
+    // The choice stays in memory, and the next tap saves it again.
+  } finally {
+    saving -= 1;
+  }
+}
+
+/** A tap on a calendar's name in the legend hides its events, or shows them again. */
+function toggleHidden(calendarId) {
+  state.hidden = toggleCalendar(state.hidden, calendarId);
+  stateChanges += 1;
+  draw();
+  void saveState();
+}
+
+/** The number of the person's calendars that are hidden now. */
+function hiddenCount() {
+  return state.hidden.filter((id) => state.calendars.has(id)).length;
+}
+
+function hiddenText() {
+  const count = hiddenCount();
+  return count === 1 ? "1 calendar hidden" : `${String(count)} calendars hidden`;
+}
+
+// --- The asks to Eva (contract 3) ---------------------------------------------------------------
+
+let askId = 0;
+const pendingAsks = new Map();
+
+/**
+ * Sends an ask to Eva, the parent window, and resolves with her answer, or with null when no
+ * answer comes within `wait` milliseconds, as outside Eva. The message leaves at once, so an ask
+ * sent from a tap carries the tap.
+ */
+function ask(message, wait) {
+  if (window.parent === window) return Promise.resolve(null);
+  askId += 1;
+  const id = askId;
+  return new Promise((resolve) => {
+    pendingAsks.set(id, resolve);
+    window.parent.postMessage({ eva: "widget", id, ...message }, "*");
+    setTimeout(() => {
+      if (pendingAsks.delete(id)) resolve(null);
+    }, wait);
+  });
+}
+
+function watchAnswers() {
+  window.addEventListener("message", (event) => {
+    if (event.source !== window.parent) return;
+    const data = event.data;
+    if (typeof data !== "object" || data === null || data.eva !== "widget" || typeof data.id !== "number") return;
+    const resolve = pendingAsks.get(data.id);
+    if (resolve === undefined) return;
+    pendingAsks.delete(data.id);
+    resolve(data);
+  });
+}
+
+/** Asks Eva which asks the person approved. With no answer, the entries that need Eva hide. */
+async function hello() {
+  const answer = await ask({ ask: "hello" }, helloWaitMs);
+  const approved = answer?.ok === true && Array.isArray(answer.asks) ? answer.asks : [];
+  state.asks = new Set(approved.filter((type) => type === "chat" || type === "open"));
 }
 
 /**
@@ -254,21 +373,45 @@ function timeText(event) {
 const eventOf = new WeakMap();
 
 /**
- * An event as a link that opens Google Calendar in a new tab, or as a box with no link. `place`
- * names where it is drawn, such as a day, so a redraw finds the same node again for its details.
- * Each one takes the keyboard focus, which shows its details.
+ * An event as a button that opens its menu. `place` names where it is drawn, such as a day, so a
+ * redraw finds the same node again for its details and its menu. Each one takes the keyboard
+ * focus, which shows its details.
  */
 function eventNode(event, className, place) {
-  const node = element(event.link === null ? "div" : "a", className);
-  if (event.link !== null) {
-    node.href = event.link;
-    node.target = "_blank";
-    node.rel = "noopener";
-  } else node.tabIndex = 0;
+  const node = element("button", className);
+  node.type = "button";
+  node.setAttribute("aria-haspopup", "menu");
+  node.setAttribute("aria-expanded", "false");
   node.dataset.key = `${event.id}|${place}`;
   eventOf.set(node, event);
   node.append(element("span", "event-bar"));
   return paint(node, event.calendarId);
+}
+
+/** A small folder: the mark of a project. */
+function folderIcon() {
+  const picture = svg("svg", { viewBox: "0 0 16 16", class: "folder-icon", "aria-hidden": "true" });
+  picture.append(
+    svg("path", { d: "M1.75 4a1 1 0 0 1 1-1h3.4l1.5 1.6h5.6a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1z" }),
+  );
+  return picture;
+}
+
+/** The mark of an event with a project, for the event's block. A screen reader reads "Project". */
+function projectMark() {
+  const mark = element("span", "project-mark");
+  mark.setAttribute("role", "img");
+  mark.setAttribute("aria-label", "Project");
+  mark.append(folderIcon());
+  return mark;
+}
+
+/** The title of an event, with the mark of its project before it when there is one and it fits. */
+function titleNode(tag, className, event, fits = true) {
+  const title = element(tag, className);
+  if (event.project !== null && fits) title.append(projectMark());
+  title.append(event.title);
+  return title;
 }
 
 function weatherDay(day) {
@@ -284,10 +427,11 @@ function dayLabel(day) {
 
 function drawSmall(view) {
   const now = new Date();
-  const next = nextEvent(state.events, now);
+  const next = nextEvent(state.shown, now);
   const box = element("div", "small");
   if (next === null) {
-    box.append(element("p", "small-empty", `No events in the next ${String(windowDays)} days.`));
+    const hidden = hiddenCount() > 0 ? ` ${hiddenText()}.` : "";
+    box.append(element("p", "small-empty", `No events in the next ${String(windowDays)} days.${hidden}`));
   } else {
     const { event } = next;
     const card = eventNode(event, "small-next", "small");
@@ -297,7 +441,7 @@ function drawSmall(view) {
     const day = dayOf(event.start) === state.today ? "" : `${dayLabel(dayOf(event.start))}, `;
     card.append(
       element("span", "small-when", when),
-      element("b", "small-title", event.title),
+      titleNode("b", "small-title", event),
       element("span", "small-time", `${day}${timeText(event)}${event.place === null ? "" : ` · ${event.place}`}`),
     );
     box.append(card);
@@ -318,14 +462,14 @@ function drawSmall(view) {
 /** The rows of one day: its all-day events, its events that did not end, and the line of now today. */
 function agendaRows(day, now) {
   const rows = [];
-  for (const event of allDayOn(state.events, day)) {
+  for (const event of allDayOn(state.shown, day)) {
     const row = element("li", "agenda-row");
     const box = eventNode(event, "agenda-event", `list-${day}`);
-    box.append(element("span", "agenda-title", event.title));
+    box.append(titleNode("span", "agenda-title", event));
     row.append(element("span", "agenda-time", "All day"), box);
     rows.push(row);
   }
-  const parts = partsOn(state.events, day).filter((item) => item.event.end > now);
+  const parts = partsOn(state.shown, day).filter((item) => item.event.end > now);
   let nowShown = day !== state.today;
   for (const { event, from } of parts) {
     if (!nowShown && event.start > now) {
@@ -335,7 +479,7 @@ function agendaRows(day, now) {
     const row = element("li", "agenda-row");
     if (event.start <= now) row.classList.add("is-now");
     const box = eventNode(event, "agenda-event", `list-${day}`);
-    box.append(element("span", "agenda-title", event.title));
+    box.append(titleNode("span", "agenda-title", event));
     if (event.place !== null) box.append(element("span", "agenda-place", event.place));
     row.append(element("span", "agenda-time", clock(from)), box);
     rows.push(row);
@@ -459,15 +603,28 @@ function dayChart(day, next, scale, now) {
   return chart;
 }
 
+/**
+ * The legend: each calendar's name is a toggle button that hides its events or shows them again,
+ * then the facts of today's weather and the credit to Open-Meteo.
+ */
 function legend(withWeather) {
   const foot = element("footer", "legend");
+  const keys = element("span", "legend-calendars");
+  keys.setAttribute("role", "group");
+  keys.setAttribute("aria-label", "Show or hide a calendar");
   for (const calendar of state.calendars.values()) {
-    const key = element("span", "legend-key");
+    const shown = !state.hidden.includes(calendar.id);
+    const key = element("button", shown ? "legend-key" : "legend-key is-off");
+    key.type = "button";
+    key.dataset.calendar = calendar.id;
+    key.setAttribute("aria-pressed", String(shown));
     const swatch = element("span", "legend-swatch event-bar");
-    key.append(swatch, calendar.name);
+    key.append(swatch, element("span", "legend-name", calendar.name));
     paint(key, calendar.id);
-    foot.append(key);
+    key.addEventListener("click", () => toggleHidden(calendar.id));
+    keys.append(key);
   }
+  foot.append(keys);
   const facts = element("span", "legend-facts");
   if (state.weather === "ready") {
     const today = state.forecast.days.get(state.today);
@@ -523,7 +680,7 @@ function drawGrid(view, viewKind) {
         state.unit,
       )
     : null;
-  const dayParts = days.map((day) => partsOn(state.events, day));
+  const dayParts = days.map((day) => partsOn(state.shown, day));
   const range = hourRange(dayParts.flat(), viewKind === "week" ? { from: 7, to: 21 } : { from: 8, to: 20 });
   const hours = range.to - range.from;
 
@@ -544,6 +701,7 @@ function drawGrid(view, viewKind) {
     corner.append(labels, readout);
   }
   head.append(corner);
+  const charts = days.map(() => null);
   const heads = days.map((day, index) => {
     const cell = element("div", "day-head");
     if (day === state.today) cell.classList.add("is-today");
@@ -551,24 +709,23 @@ function drawGrid(view, viewKind) {
     cell.append(name);
     const forecast = forecasts[index];
     if (forecast !== null && scale !== null) {
-      cell.append(
-        weatherLine(day),
-        dayChart(
-          forecast,
-          forecasts[index + 1] ?? weatherDay(addDays(day, 1)),
-          scale,
-          day === state.today ? nowHours : null,
-        ),
+      charts[index] = dayChart(
+        forecast,
+        forecasts[index + 1] ?? weatherDay(addDays(day, 1)),
+        scale,
+        day === state.today ? nowHours : null,
       );
+      cell.append(weatherLine(day), charts[index]);
     }
     head.append(cell);
     return cell;
   });
   grid.append(head);
+  shownCharts = { days, charts };
 
   // The all-day row: one bar for each event over its days, in lanes. The cells of the days draw
   // the lines between the days behind the bars.
-  const allDay = allDayLanes(state.events, days);
+  const allDay = allDayLanes(state.shown, days);
   if (allDay.bars.length > 0) {
     const row = element("div", "grid-all-day");
     row.style.setProperty("--lanes", String(allDay.lanes));
@@ -586,7 +743,7 @@ function drawGrid(view, viewKind) {
       if (bar.cutStart) node.classList.add("is-cut-start");
       if (bar.cutEnd) node.classList.add("is-cut-end");
       if (bar.event.endDate < state.today) node.classList.add("is-past");
-      node.append(element("b", "event-title", bar.event.title));
+      node.append(titleNode("b", "event-title", bar.event));
       row.append(node);
     }
     grid.append(row);
@@ -608,7 +765,8 @@ function drawGrid(view, viewKind) {
   view.replaceChildren(grid);
 
   // The hours fit the free height, so the grid needs no scroll bar where it can.
-  const free = scroll.clientHeight - 10;
+  // The padding at the top, and room for the half of the last hour label that hangs below the grid.
+  const free = scroll.clientHeight - 16;
   const hourPx = hourHeight(free, hours, viewKind === "week" ? 16 : 14);
   grid.style.setProperty("--hour", `${String(hourPx)}px`);
   body.style.setProperty("height", `${String(hours * hourPx)}px`);
@@ -653,7 +811,9 @@ function drawGrid(view, viewKind) {
       box.style.setProperty("height", `${String(Math.max(12, height))}px`);
       box.style.setProperty("left", `calc(${String(item.left * 100)}% + 2px)`);
       box.style.setProperty("width", `calc(${String(item.width * 100)}% - 4px)`);
-      box.append(element("b", "event-title", event.title), element("small", "event-time", timeText(event)));
+      // The mark of a project shows when the block has room for it beside some of the title.
+      const fits = columnWidth * item.width - 4 >= 56;
+      box.append(titleNode("b", "event-title", event, fits), element("small", "event-time", timeText(event)));
       if (event.place !== null && height > 58) box.append(element("small", "event-place", event.place));
       column.append(box);
     }
@@ -667,15 +827,17 @@ function drawGrid(view, viewKind) {
     scroll.scrollTop = Math.max(0, (nowHours - range.from) * hourPx - scroll.clientHeight / 3);
   }
 
-  if (scale !== null) watchHover({ grid, heads, body, columns, hoverLine, readout, days, forecasts, range, hourPx });
+  if (scale !== null)
+    watchHover({ grid, heads, charts, body, columns, hoverLine, readout, days, forecasts, range, hourPx });
 }
 
 /**
- * Hover, or a touch, shows the forecast of that moment: a marker on every day's chart, and the
- * day, the hour, the temperature and the chance of rain in the corner.
+ * Hover, or a touch, shows the forecast of that moment: a marker on every day's chart, strong on
+ * the day under the pointer, and the day, the hour, the temperature and the chance of rain in the
+ * corner.
  */
 function watchHover(grid) {
-  const markers = [...grid.grid.querySelectorAll(".chart-marker")];
+  const markers = grid.charts.map((chart) => chart?.querySelector(".chart-marker") ?? null);
   const clear = () => grid.grid.classList.remove("is-hovering");
   const show = (event) => {
     const index = grid.heads.findIndex((cell) => {
@@ -699,10 +861,13 @@ function watchHover(grid) {
     } else return clear();
     hours = Math.max(0, Math.min(23.99, hours));
     const weather = weatherAt(forecast, hours);
-    for (const marker of markers) {
+    // The marker of the day under the pointer is the strong one.
+    markers.forEach((marker, other) => {
+      if (marker === null) return;
       marker.setAttribute("x1", String(hours));
       marker.setAttribute("x2", String(hours));
-    }
+      marker.classList.toggle("is-current", other === index);
+    });
     grid.readout.replaceChildren(
       element("span", "readout-day", dayLabel(grid.days[index])),
       element("span", "readout-hour", clock(hours)),
@@ -716,15 +881,61 @@ function watchHover(grid) {
   grid.grid.addEventListener("pointerleave", clear);
 }
 
+// --- The event's hours in the charts ------------------------------------------------------------
+
+/** The charts of the days that the time grid shows, by day, or null with no grid. */
+let shownCharts = null;
+
+const roundHours = (value) => Math.round(value * 1000) / 1000;
+
+/**
+ * Draws a box in the event's colour over its hours in the chart of each of its shown days: for an
+ * event over midnight, on each day's chart, and for an all-day event, a band over the whole chart.
+ * With null, removes the boxes.
+ */
+function markCharts(event) {
+  for (const old of root.querySelectorAll(".chart-event")) old.remove();
+  if (event === null || shownCharts === null) return;
+  const calendar = state.calendars.get(event.calendarId) ?? unknownCalendar;
+  shownCharts.days.forEach((day, index) => {
+    const chart = shownCharts.charts[index];
+    if (chart === null) return;
+    const spans = event.allDay
+      ? event.date <= day && event.endDate >= day
+        ? [{ from: 0, to: 24 }]
+        : []
+      : partsOn([event], day).map(({ from, to }) => ({ from, to: Math.min(24, to) }));
+    for (const { from, to } of spans) {
+      const rect = svg("rect", {
+        class: "chart-event",
+        x: roundHours(from),
+        y: 0,
+        width: roundHours(to - from),
+        height: 100,
+      });
+      if (calendar.color !== null) rect.style.setProperty("--calendar-colour", calendar.color);
+      // Under the temperature line, so the line stays in view.
+      chart.insertBefore(rect, chart.querySelector(".chart-temperature, .chart-now, .chart-marker"));
+    }
+  });
+}
+
+/** The boxes follow the event of the open menu, else the event of the details. */
+function refreshMarks() {
+  const key = menu.key ?? tooltip.key;
+  const node = key === null ? null : findKey(key);
+  markCharts(node === null ? null : (eventOf.get(node) ?? null));
+}
+
 // --- The details of an event ---------------------------------------------------------------------
 
 /**
- * One tooltip shows the details of an event, inverted as Eva's own tooltip: on hover with a mouse,
- * on keyboard focus, and on a touch screen on the first tap. A second tap on the same event opens
- * it in Google Calendar; a tap anywhere else closes the details. The tooltip takes no pointer, so
- * the readout of the chart goes on under it.
+ * One tooltip shows the details of an event, inverted as Eva's own tooltip: on hover with a mouse
+ * and on keyboard focus. A click or a tap opens the event's menu instead (see below); on a touch
+ * screen the menu holds the details. The tooltip takes no pointer, so the readout of the chart
+ * goes on under it.
  */
-const tooltip = { node: null, key: null, armed: null, pointer: "mouse", dismissed: null, restoring: false };
+const tooltip = { node: null, key: null, pointer: "mouse", dismissed: null, restoring: false };
 
 function tooltipNode() {
   if (tooltip.node === null) {
@@ -736,6 +947,8 @@ function tooltipNode() {
   }
   return tooltip.node;
 }
+
+const findKey = (key) => root.querySelector(`[data-key="${CSS.escape(key)}"]`);
 
 /** The forecast during an event, as one line of its details, or null with no forecast. */
 function eventWeather(event) {
@@ -760,39 +973,55 @@ function eventWeather(event) {
   return line;
 }
 
-function showTooltip(target) {
-  const event = eventOf.get(target);
-  if (event === undefined) return;
-  const node = tooltipNode();
+/** The line of an event's project: a folder and the project's title. */
+function projectLine(className, project) {
+  const line = element("span", className);
+  line.append(folderIcon(), element("span", "", project.title));
+  return line;
+}
+
+/**
+ * The details of an event under its title: the day and the time, the calendar, the project, the
+ * place, the forecast during it and the start of its description.
+ */
+function detailLines(event) {
   const calendar = state.calendars.get(event.calendarId) ?? unknownCalendar;
   const name = element("span", "tooltip-calendar");
   name.append(paint(element("span", "legend-swatch event-bar"), event.calendarId), calendar.name);
-  const lines = [element("b", "tooltip-title", event.title), element("span", "tooltip-when", whenText(event)), name];
+  const lines = [element("span", "tooltip-when", whenText(event)), name];
+  if (event.project !== null) lines.push(projectLine("tooltip-project", event.project));
   if (event.place !== null) lines.push(element("span", "tooltip-place", event.place));
   const weather = eventWeather(event);
   if (weather !== null) lines.push(weather);
-  node.replaceChildren(...lines);
+  if (event.description !== null) lines.push(element("span", "tooltip-description", event.description));
+  return lines;
+}
+
+/** The box of an event, cut to the part that shows in its scroll area. */
+function anchorOf(target) {
+  const box = target.getBoundingClientRect();
+  const area = target.closest(".grid-scroll")?.getBoundingClientRect() ?? root.getBoundingClientRect();
+  const top = Math.max(box.top, area.top);
+  return { left: box.left, right: box.right, top, bottom: Math.max(top, Math.min(box.bottom, area.bottom)) };
+}
+
+function showTooltip(target) {
+  const event = eventOf.get(target);
+  if (event === undefined || menu.key !== null) return;
+  const node = tooltipNode();
+  node.replaceChildren(element("b", "tooltip-title", event.title), ...detailLines(event));
   node.hidden = false;
   for (const other of root.querySelectorAll("[aria-describedby='event-tooltip']"))
     other.removeAttribute("aria-describedby");
   target.setAttribute("aria-describedby", "event-tooltip");
   tooltip.key = target.dataset.key;
-
-  // The event's box, cut to the part that shows in its scroll area.
-  const box = target.getBoundingClientRect();
-  const area = target.closest(".grid-scroll")?.getBoundingClientRect() ?? root.getBoundingClientRect();
-  const anchor = {
-    left: box.left,
-    right: box.right,
-    top: Math.max(box.top, area.top),
-    bottom: Math.max(Math.max(box.top, area.top), Math.min(box.bottom, area.bottom)),
-  };
   const frame = root.getBoundingClientRect();
   const size = node.getBoundingClientRect();
-  const place = tooltipPosition(anchor, { width: size.width, height: size.height }, frame);
+  const place = tooltipPosition(anchorOf(target), { width: size.width, height: size.height }, frame);
   node.style.setProperty("left", `${String(place.left)}px`);
   node.style.setProperty("top", `${String(place.top)}px`);
   node.dataset.side = place.side;
+  refreshMarks();
 }
 
 function hideTooltip() {
@@ -800,11 +1029,21 @@ function hideTooltip() {
   tooltip.key = null;
   for (const other of root.querySelectorAll("[aria-describedby='event-tooltip']"))
     other.removeAttribute("aria-describedby");
+  refreshMarks();
 }
 
 const eventTarget = (event) => (event.target instanceof Element ? event.target.closest("[data-key]") : null);
+const inMenu = (event) => event.target instanceof Element && event.target.closest(".menu") !== null;
 
-function watchTooltip() {
+/** Gives the focus back to an event, with its details closed, as after Escape. */
+function focusQuietly(target) {
+  tooltip.dismissed = target.dataset.key;
+  tooltip.restoring = true;
+  target.focus({ preventScroll: true });
+  tooltip.restoring = false;
+}
+
+function watchEvents() {
   root.addEventListener("pointerover", (event) => {
     const target = eventTarget(event);
     if (event.pointerType === "mouse" && target !== null) showTooltip(target);
@@ -818,22 +1057,21 @@ function watchTooltip() {
   });
   root.addEventListener("pointerdown", (event) => {
     tooltip.pointer = event.pointerType;
-    if (event.pointerType !== "mouse" && eventTarget(event) === null) {
-      tooltip.armed = null;
-      hideTooltip();
-    }
+    const target = eventTarget(event);
+    // A tap or a click anywhere else closes the menu; one on its own event toggles it on click.
+    if (menu.key !== null && !inMenu(event) && target?.dataset.key !== menu.key) closeMenu(false);
+    if (event.pointerType !== "mouse" && target === null && !inMenu(event)) hideTooltip();
   });
   root.addEventListener("click", (event) => {
     const target = eventTarget(event);
-    if (target === null || tooltip.pointer === "mouse") return;
-    // A touch: the first tap shows the details, the second opens the event.
-    if (tooltip.armed !== target.dataset.key) {
-      event.preventDefault();
-      tooltip.armed = target.dataset.key;
-      showTooltip(target);
+    if (target === null) return;
+    if (menu.key === target.dataset.key) {
+      closeMenu(false);
       return;
     }
-    tooltip.armed = null;
+    // A click from the keyboard has no pointer type; a touch or a pen shows the details in the menu.
+    const kind = event.pointerType === "" || event.detail === 0 ? "keyboard" : (event.pointerType ?? tooltip.pointer);
+    openMenu(target, kind === "touch" || kind === "pen");
   });
   root.addEventListener("focusin", (event) => {
     const target = eventTarget(event);
@@ -849,33 +1087,228 @@ function watchTooltip() {
   });
   root.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
+    if (menu.key !== null) {
+      closeMenu(true);
+      return;
+    }
     tooltip.dismissed = tooltip.key;
     hideTooltip();
   });
 }
 
-/** After a redraw, the details stay on the same event, on its new node, or close. */
-function keepTooltip(focusedKey) {
-  const find = (key) => (key === null ? null : root.querySelector(`[data-key="${CSS.escape(key)}"]`));
-  const focused = find(focusedKey);
-  if (focused !== null) {
-    tooltip.restoring = true;
-    focused.focus({ preventScroll: true });
-    tooltip.restoring = false;
+// --- The menu of an event -----------------------------------------------------------------------
+
+/**
+ * A click or a tap on an event opens its menu: a chat about the event and the event's project,
+ * which Eva opens when the person approved these asks, and the event in Google Calendar. On a
+ * touch screen the menu also holds the event's details. Enter opens it from the keyboard, the
+ * arrows move in it, and Escape closes it and gives the focus back to the event.
+ */
+const menu = { node: null, key: null, details: false, status: "" };
+
+function menuNode() {
+  if (menu.node === null) {
+    menu.node = element("div", "menu");
+    menu.node.id = "event-menu";
+    menu.node.hidden = true;
+    menu.node.addEventListener("keydown", menuKeys);
+    root.append(menu.node);
+  }
+  return menu.node;
+}
+
+const menuItems = () => [...menuNode().querySelectorAll('[role="menuitem"]')];
+
+function openMenu(target, details) {
+  hideTooltip();
+  closeMenu(false);
+  menu.key = target.dataset.key;
+  menu.details = details;
+  menu.status = "";
+  renderMenu();
+}
+
+/** Draws the menu of the event of `menu.key`, places it, and moves the focus to its first entry. */
+function renderMenu() {
+  const target = findKey(menu.key);
+  const event = target === null ? undefined : eventOf.get(target);
+  if (event === undefined) {
+    closeMenu(false);
     return;
   }
-  const shown = find(tooltip.key);
+  const node = menuNode();
+  const entries = menuEntries(event, state.asks);
+  const head = element("div", "menu-head");
+  head.append(element("b", "menu-title", event.title));
+  // With no entry, the menu still says what the event is.
+  if (menu.details || entries.length === 0) head.append(...detailLines(event));
+  else if (event.project !== null) head.append(projectLine("menu-project", event.project));
+  const list = element("div", "menu-list");
+  list.setAttribute("role", "menu");
+  list.setAttribute("aria-label", event.title);
+  for (const entry of entries) list.append(menuItem(entry, event));
+  const status = element("p", "menu-status", menu.status);
+  status.setAttribute("role", "status");
+  node.replaceChildren(head, ...(entries.length > 0 ? [list] : []), status);
+  node.hidden = false;
+  target.setAttribute("aria-expanded", "true");
+  target.setAttribute("aria-controls", "event-menu");
+  placeMenu(target);
+  refreshMarks();
+  (menuItems()[0] ?? null)?.focus({ preventScroll: true });
+}
+
+function menuItem(entry, event) {
+  if (entry.kind === "google") {
+    const link = element("a", "menu-item", entry.label);
+    link.href = event.link;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.setAttribute("role", "menuitem");
+    link.tabIndex = -1;
+    // Close after the browser follows the link.
+    link.addEventListener("click", () => setTimeout(() => closeMenu(false), 0));
+    return link;
+  }
+  const button = element("button", "menu-item", entry.label);
+  button.type = "button";
+  button.setAttribute("role", "menuitem");
+  button.tabIndex = -1;
+  button.addEventListener("click", () => void runAsk(entry.kind, event));
+  return button;
+}
+
+const askFailures = {
+  "not-allowed": "Eva does not allow this widget to do that.",
+  "not-found": "Eva did not find it.",
+  "too-long": "The text is too long for Eva.",
+};
+
+/**
+ * Asks Eva for a chat about the event, or to open its project. The ask leaves at once, with the
+ * tap. On success Eva takes over and the menu closes; a refusal shows in the menu, and an ask
+ * that is not allowed leaves it.
+ */
+async function runAsk(kind, event) {
+  const calendar = state.calendars.get(event.calendarId) ?? null;
+  const message =
+    kind === "chat"
+      ? { ask: "chat", text: chatText(event, calendar?.name ?? null) }
+      : { ask: "open", path: event.project.path };
+  const key = menu.key;
+  const answer = await ask(message, askWaitMs);
+  if (menu.key !== key) return;
+  if (answer?.ok === true) {
+    closeMenu(false);
+    return;
+  }
+  if (answer?.reason === "not-allowed") state.asks.delete(message.ask);
+  menu.status =
+    answer === null
+      ? "Eva did not answer. Try again."
+      : (askFailures[answer.reason] ?? `Eva could not ${kind === "chat" ? "open the chat" : "open it"}. Try again.`);
+  renderMenu();
+}
+
+/** Places the menu at its event, inside the frame and off the top right corner. */
+function placeMenu(target) {
+  const node = menuNode();
+  node.style.removeProperty("max-height");
+  node.style.removeProperty("width");
+  node.style.removeProperty("height");
+  const frame = root.getBoundingClientRect();
+  // A frame too short for a menu under its event, such as the header slot: the menu fills the
+  // frame as one row, left of the corner.
+  const inline = frame.height < 130;
+  node.classList.toggle("is-inline", inline);
+  if (inline) {
+    node.style.setProperty("left", "4px");
+    node.style.setProperty("top", "4px");
+    node.style.setProperty("width", `${String(Math.max(120, frame.width - 64))}px`);
+    node.style.setProperty("height", `${String(frame.height - 8)}px`);
+    node.style.setProperty("max-height", `${String(frame.height - 8)}px`);
+    node.dataset.side = "inside";
+    return;
+  }
+  const size = node.getBoundingClientRect();
+  const place = menuPosition(anchorOf(target), { width: size.width, height: size.height }, frame);
+  node.style.setProperty("left", `${String(place.left)}px`);
+  node.style.setProperty("top", `${String(place.top)}px`);
+  node.style.setProperty("max-height", `${String(place.maxHeight)}px`);
+  node.dataset.side = place.side;
+}
+
+function closeMenu(returnFocus) {
+  if (menu.key === null) return;
+  const target = findKey(menu.key);
+  menu.key = null;
+  menuNode().hidden = true;
+  if (target !== null) {
+    target.setAttribute("aria-expanded", "false");
+    target.removeAttribute("aria-controls");
+    if (returnFocus) focusQuietly(target);
+  }
+  refreshMarks();
+}
+
+function menuKeys(event) {
+  const items = menuItems();
+  const index = items.indexOf(document.activeElement);
+  const move = (to) => {
+    event.preventDefault();
+    items[(to + items.length) % items.length]?.focus();
+  };
+  if (event.key === "ArrowDown") move(index + 1);
+  else if (event.key === "ArrowUp") move(index < 0 ? -1 : index - 1);
+  else if (event.key === "Home") move(0);
+  else if (event.key === "End") move(-1);
+  else if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    closeMenu(true);
+  } else if (event.key === "Tab") {
+    // The focus goes back to the event, and Tab moves on from there.
+    closeMenu(true);
+  }
+}
+
+/** After a redraw, the details and the menu stay on the same event, on its new node, or close. */
+function keepOpen(focused) {
+  if (menu.key !== null) {
+    const target = findKey(menu.key);
+    if (target === null) closeMenu(false);
+    else {
+      target.setAttribute("aria-expanded", "true");
+      target.setAttribute("aria-controls", "event-menu");
+      placeMenu(target);
+    }
+  }
+  const node =
+    focused.key !== null
+      ? findKey(focused.key)
+      : focused.calendar !== null
+        ? root.querySelector(`[data-calendar="${CSS.escape(focused.calendar)}"]`)
+        : null;
+  if (node !== null) {
+    tooltip.restoring = true;
+    node.focus({ preventScroll: true });
+    tooltip.restoring = false;
+    if (focused.key !== null) return;
+  }
+  const shown = tooltip.key === null ? null : findKey(tooltip.key);
   if (shown === null) hideTooltip();
   else showTooltip(shown);
+  refreshMarks();
 }
 
 // --- Start ----------------------------------------------------------------------------------------
 
 function draw() {
-  const focusedKey =
-    document.activeElement instanceof HTMLElement ? (document.activeElement.dataset.key ?? null) : null;
+  const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const focused = { key: active?.dataset.key ?? null, calendar: active?.dataset.calendar ?? null };
+  shownCharts = null;
   drawView();
-  keepTooltip(focusedKey);
+  keepOpen(focused);
 }
 
 function drawView() {
@@ -883,11 +1316,14 @@ function drawView() {
   root.dataset.state = state.calendar;
   part("message").textContent = state.calendar === "error" ? noCalendar : "";
   part("range").textContent = "";
+  part("hidden").textContent = "";
   if (state.calendar !== "ready") {
     view.replaceChildren();
     return;
   }
-  if (state.size === "small") drawSmall(view);
+  state.shown = visibleEvents(state.events, state.hidden, state.hideTitle);
+  let legendShown = false;
+  if (state.size === "small" || state.size === "header") drawSmall(view);
   else if (state.size === "medium") {
     part("range").textContent = `Today, ${dayLabel(state.today)}`;
     drawMedium(view);
@@ -898,7 +1334,12 @@ function drawView() {
       part("range").textContent = rangeLabel(state.today, addDays(state.today, windowDays - 1));
       drawList(view);
     }
-  } else drawGrid(view, "week");
+  } else {
+    drawGrid(view, "week");
+    legendShown = true;
+  }
+  // With no legend, the head says that some calendars are hidden: full screen turns them on.
+  if (!legendShown && hiddenCount() > 0) part("hidden").textContent = hiddenText();
 }
 
 /** Draws on the next frame, once, however many changes ask for it. */
@@ -912,10 +1353,12 @@ async function start() {
   // Opened alone in a browser, the widget shows its full-screen view.
   state.size = sizes.includes(size) ? size : "full";
   root.dataset.size = state.size;
+  watchAnswers();
   const config = (await request("config.json")).body ?? {};
   if (config.unit === "fahrenheit") state.unit = "fahrenheit";
-  await Promise.all([loadCalendar(), loadWeather()]);
-  watchTooltip();
+  state.hideTitle = titleFilter(config.hideTitles);
+  await Promise.all([loadCalendar(), loadWeather(), hello()]);
+  watchEvents();
   draw();
   new ResizeObserver(scheduleDraw).observe(root);
   // The now line moves, and at midnight a new day starts.

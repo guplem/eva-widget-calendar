@@ -107,9 +107,36 @@ a {
   text-decoration: none;
 }
 
-a:focus-visible {
+a:focus-visible,
+button:focus-visible {
   outline: 2px solid var(--accent, #3b82f6);
   outline-offset: 1px;
+}
+
+/* An event and a calendar's name are buttons: they keep the look of what they show. */
+.event,
+.all-day-event,
+.agenda-event,
+.small-next,
+.legend-key,
+.menu-item {
+  margin: 0;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hidden-note {
+  margin: 0;
+  color: var(--muted, #5d6475);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.hidden-note:empty {
+  display: none;
 }
 
 /* --- The icons, as the weather widget draws them -------------------------------------------------- */
@@ -508,10 +535,27 @@ a:focus-visible {
   vector-effect: non-scaling-stroke;
 }
 
+/* The marker of the day under the pointer is strong; the markers of the other days are lighter. */
 .chart-marker {
   display: none;
   stroke: var(--ink, #1f2430);
-  stroke-width: 1.2;
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+  opacity: 0.4;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart-marker.is-current {
+  stroke-width: 1.8;
+  stroke-dasharray: none;
+  opacity: 1;
+}
+
+/* The hours of the event under the pointer or the focus, in its calendar's colour. */
+.chart-event {
+  fill: color-mix(in srgb, var(--calendar-colour, var(--accent, #3b82f6)) 30%, transparent);
+  stroke: var(--calendar-colour, var(--accent, #3b82f6));
+  stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
 }
 
@@ -829,14 +873,52 @@ a:focus-visible {
   font-weight: 600;
 }
 
+.legend-calendars {
+  display: contents;
+}
+
+/* Each calendar's name turns its events on and off. An off calendar keeps its swatch, crossed out, and its name is struck. */
 .legend-key {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-height: 24px;
+  margin: -2px -6px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink, #1f2430);
+  font-weight: 600;
+}
+
+.legend-key:hover {
+  background: var(--chip, #eef0f5);
+}
+
+.legend-key.is-off {
+  color: var(--muted, #5d6475);
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+}
+
+.legend-key.is-off .legend-swatch {
+  opacity: 0.45;
+}
+
+.legend-key.is-off .legend-swatch::after {
+  position: absolute;
+  top: 50%;
+  left: -2px;
+  width: 16px;
+  height: 0;
+  border-top: 1.5px solid var(--ink, #1f2430);
+  transform: rotate(-45deg);
+  content: "";
 }
 
 .legend-swatch {
   position: relative;
+  flex: none;
   width: 12px;
   height: 12px;
   border-radius: 3px;
@@ -907,7 +989,8 @@ a:focus-visible {
 .tooltip-when,
 .tooltip-place,
 .tooltip-weather,
-.tooltip-calendar {
+.tooltip-calendar,
+.tooltip-project {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -918,6 +1001,36 @@ a:focus-visible {
 .tooltip-when {
   font-family: var(--mono);
   font-size: 11px;
+}
+
+.tooltip-description {
+  display: -webkit-box;
+  overflow: hidden;
+  white-space: pre-line;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.folder-icon {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+}
+
+/* The mark of a project in an event's block: a small folder before the title. */
+.project-mark {
+  display: inline-flex;
+  margin-right: 3px;
+  vertical-align: -1px;
+}
+
+.project-mark .folder-icon {
+  width: 11px;
+  height: 11px;
 }
 
 .tooltip-calendar .legend-swatch {
@@ -940,4 +1053,191 @@ a:focus-visible {
   .tooltip {
     animation: none;
   }
+}
+
+/* --- The menu of an event ------------------------------------------------------------------------ */
+
+.menu {
+  position: fixed;
+  z-index: 110;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: max-content;
+  min-width: min(200px, calc(100vw - 8px));
+  max-width: min(280px, calc(100vw - 8px));
+  padding: 8px;
+  border: 1px solid var(--line, #d9dce5);
+  border-radius: 10px;
+  background: var(--panel, #ffffff);
+  color: var(--ink, #1f2430);
+  box-shadow: 0 6px 20px color-mix(in srgb, #000000 22%, transparent);
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.3;
+  animation: tooltip-in var(--dur-fast, 150ms) var(--ease-out, ease-out);
+}
+
+.menu[hidden] {
+  display: none;
+}
+
+.menu-head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 0 4px;
+}
+
+.menu-title {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.menu-head .tooltip-when,
+.menu-head .tooltip-place,
+.menu-head .tooltip-weather,
+.menu-head .tooltip-calendar,
+.menu-head .tooltip-project,
+.menu-head .tooltip-description,
+.menu-project {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted, #5d6475);
+  overflow-wrap: anywhere;
+}
+
+.menu-head .tooltip-description {
+  display: -webkit-box;
+}
+
+.menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line, #d9dce5);
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: transparent;
+  font-weight: 600;
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+  background: var(--soft, #e6f0ff);
+  color: var(--soft-ink, #1e3a8a);
+}
+
+.menu-item:focus-visible {
+  outline-offset: -2px;
+}
+
+.menu-status {
+  margin: 0;
+  padding: 0 4px;
+  color: var(--bad, #c62828);
+  font-weight: 600;
+}
+
+.menu-status:empty {
+  display: none;
+}
+
+/* A short frame: the menu is more compact. */
+@media (max-height: 220px) {
+  .menu {
+    gap: 3px;
+    padding: 4px;
+  }
+
+  .menu-list {
+    padding-top: 3px;
+  }
+
+  .menu-item {
+    min-height: 26px;
+    padding: 4px 6px;
+  }
+}
+
+/* A frame too short for a menu under its event: the title, then the entries in a row. */
+.menu.is-inline {
+  flex-flow: row wrap;
+  align-items: center;
+  max-width: none;
+  min-width: 0;
+}
+
+.menu.is-inline .menu-head {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.menu.is-inline .menu-head > :not(.menu-title) {
+  display: none;
+}
+
+.menu.is-inline .menu-title {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.menu.is-inline .menu-list {
+  flex-flow: row wrap;
+  padding-top: 0;
+  border-top: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu {
+    animation: none;
+  }
+}
+
+/* --- Header: one line beside Eva's greeting ------------------------------------------------------- */
+
+.widget[data-size="header"] .widget-header {
+  display: none;
+}
+
+.widget[data-size="header"] .small {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding-right: 48px;
+}
+
+.widget[data-size="header"] .small-next {
+  flex: 1;
+  justify-content: center;
+  align-self: stretch;
+  min-width: 0;
+}
+
+.widget[data-size="header"] .small-title {
+  font-size: clamp(13px, 30vmin, 18px);
+  -webkit-line-clamp: 1;
+}
+
+.widget[data-size="header"] .small-when,
+.widget[data-size="header"] .small-time {
+  font-size: 11px;
+}
+
+.widget[data-size="header"] .small-weather .icon {
+  width: 26px;
+  height: 26px;
+}
+
+.widget[data-size="header"] .small-temperature {
+  font-size: 22px;
 }

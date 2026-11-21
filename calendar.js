@@ -97,6 +97,21 @@ export function isWholeDay(start, end) {
   return (isMidnight(start) && isMidnight(end)) || end.getTime() - start.getTime() >= 24 * hourMs;
 }
 
+/** The longest description that the widget keeps, as Eva sends it: 2000 characters. */
+const descriptionLimit = 2000;
+
+/**
+ * The project of an event, as Eva finds it in its description: `{ id, title, path }`, or null. The
+ * path is a path in the vault, from its root, so a path that leaves it is dropped.
+ */
+export function readProject(value) {
+  if (typeof value !== "object" || value === null) return null;
+  const { id, title, path } = value;
+  if (typeof id !== "string" || id === "" || typeof path !== "string" || path === "") return null;
+  if (path.startsWith("/") || path.split("/").some((part) => part === ".." || part === ".")) return null;
+  return { id, title: typeof title === "string" && title.trim() !== "" ? title : id, path };
+}
+
 /**
  * The events of `events.json`, or null for Eva's `null` answer. A timed event gets `start` and
  * `end` as dates; an all-day event gets `allDay: true` with `date` and `endDate`. A timed event
@@ -116,6 +131,11 @@ export function readEvents(value) {
       title: typeof item.title === "string" && item.title.trim() !== "" ? item.title : noTitle,
       place: typeof item.place === "string" && item.place !== "" ? item.place : null,
       link: safeLink(item.link),
+      description:
+        typeof item.description === "string" && item.description.trim() !== ""
+          ? item.description.slice(0, descriptionLimit)
+          : null,
+      project: readProject(item.project),
     };
     if (typeof item.date === "string" && isoDay.test(item.date)) {
       const endDate = typeof item.endDate === "string" && item.endDate >= item.date ? item.endDate : item.date;
@@ -452,4 +472,192 @@ export function tooltipPosition(anchor, size, frame, { gap = 6, margin = 4, corn
     else if (corner + size.height <= frame.height - margin) top = corner;
   }
   return { left: Math.max(margin, left), top: Math.max(margin, top), side };
+}
+
+// --- Which events show ---------------------------------------------------------------------------
+
+/** The limits of the `hideTitles` input, so a long or slow expression cannot freeze the widget. */
+export const hideTitlesLimits = { length: 500, patterns: 20, title: 300 };
+
+/**
+ * The patterns of the `hideTitles` input. A comma separates two patterns, except inside `{}` or `[]`, so `a{2,3}` and `[,;]` stay whole. `\,` is a comma in a
+ * pattern too. Empty patterns are dropped.
+ */
+export function splitPatterns(raw) {
+  const parts = [];
+  let current = "";
+  let braces = 0;
+  let inClass = false;
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index];
+    if (char === "\\" && index + 1 < raw.length) {
+      current += char + raw[index + 1];
+      index += 1;
+      continue;
+    }
+    if (inClass) {
+      if (char === "]") inClass = false;
+    } else if (char === "[") inClass = true;
+    else if (char === "{") braces += 1;
+    else if (char === "}") braces = Math.max(0, braces - 1);
+    else if (char === "," && braces === 0) {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  parts.push(current);
+  return parts.map((part) => part.trim()).filter((part) => part !== "");
+}
+
+/**
+ * Whether a regular expression may take very long on some titles: a repeated group that holds a
+ * repeat itself, such as `(a+)+` or `(\w*\s?)*`, can try an exponential number of ways. Such a
+ * pattern is matched as plain text instead.
+ */
+export function isSlowPattern(pattern) {
+  const groups = [{ repeats: false }];
+  let closed = null;
+  let index = 0;
+  while (index < pattern.length) {
+    const char = pattern[index];
+    let repeat = char === "*" || char === "+";
+    let length = 1;
+    if (char === "{") {
+      const bound = /^\{(\d+)(,(\d*))?\}/.exec(pattern.slice(index));
+      if (bound !== null) {
+        length = bound[0].length;
+        const most = bound[2] === undefined ? Number(bound[1]) : bound[3] === "" ? Infinity : Number(bound[3]);
+        repeat = most > 1;
+      }
+    }
+    if (repeat) {
+      if (closed?.repeats === true) return true;
+      groups[groups.length - 1].repeats = true;
+      closed = null;
+      index += length;
+      continue;
+    }
+    closed = null;
+    if (char === "\\") index += 2;
+    else if (char === "[") {
+      index += 1;
+      while (index < pattern.length && pattern[index] !== "]") index += pattern[index] === "\\" ? 2 : 1;
+      index += 1;
+    } else if (char === "(") {
+      groups.push({ repeats: false });
+      index += 1;
+    } else if (char === ")") {
+      if (groups.length > 1) {
+        closed = groups.pop();
+        if (closed.repeats) groups[groups.length - 1].repeats = true;
+      }
+      index += 1;
+    } else index += 1;
+  }
+  return false;
+}
+
+const escapeText = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+function compilePattern(text) {
+  const literal = new RegExp(escapeText(text), "i");
+  if (isSlowPattern(text)) return literal;
+  try {
+    return new RegExp(text, "i");
+  } catch {
+    // An invalid expression is plain text: a typo hides what it says, not every event.
+    return literal;
+  }
+}
+
+/**
+ * The test of the `hideTitles` input: a function that says whether a title hides its event, or null
+ * when the input holds no pattern. Each pattern is a regular expression, case-insensitive, that may
+ * match anywhere in the title. The input, the number of patterns and the tested part of a title are
+ * capped by `hideTitlesLimits`.
+ */
+export function titleFilter(raw) {
+  if (typeof raw !== "string") return null;
+  const patterns = splitPatterns(raw.slice(0, hideTitlesLimits.length))
+    .slice(0, hideTitlesLimits.patterns)
+    .map(compilePattern);
+  if (patterns.length === 0) return null;
+  return (title) => {
+    const text = title.slice(0, hideTitlesLimits.title);
+    return patterns.some((pattern) => pattern.test(text));
+  };
+}
+
+/** The ids of the hidden calendars in the widget's state of `eva/state.json`. */
+export function readHiddenCalendars(value) {
+  const list = typeof value === "object" && value !== null ? value.hiddenCalendars : undefined;
+  if (!Array.isArray(list)) return [];
+  return [...new Set(list.filter((id) => typeof id === "string" && id !== "" && id.length <= 500))].slice(0, 200);
+}
+
+/** The hidden calendars after a tap on a calendar's name: hidden when it showed, shown when it was hidden. */
+export function toggleCalendar(hidden, id) {
+  return hidden.includes(id) ? hidden.filter((other) => other !== id) : [...hidden, id];
+}
+
+/**
+ * The events that show: none of a hidden calendar, and none whose title the `hideTitles` test
+ * hides. The title tested is the one that shows, so an event with no title is "Busy".
+ */
+export function visibleEvents(events, hidden, hideTitle = null) {
+  const off = new Set(hidden);
+  return events.filter((event) => !off.has(event.calendarId) && !(hideTitle?.(event.title) ?? false));
+}
+
+// --- The menu of an event ------------------------------------------------------------------------
+
+/**
+ * The entries of an event's menu. `asks` holds the asks that Eva approved, from her answer to
+ * `hello`: empty outside Eva. A chat needs `chat`, the project needs `open` and a project, and
+ * Google Calendar needs a link.
+ */
+export function menuEntries(event, asks) {
+  const entries = [];
+  if (asks.has("chat")) entries.push({ kind: "chat", label: "Open a chat about this event" });
+  if (event.project !== null && asks.has("open")) entries.push({ kind: "project", label: "Open the project" });
+  if (event.link !== null) entries.push({ kind: "google", label: "See in Google Calendar" });
+  return entries;
+}
+
+/** The longest text of a chat ask: Eva refuses a longer one. */
+export const chatLimit = 2000;
+
+const cut = (text, most) => (text.length > most ? `${text.slice(0, most - 1)}…` : text);
+
+/**
+ * The text that the chat entry puts in Eva's message box: the title, the day and the time, the
+ * calendar, the place and the project, in a few words. Eva never sends it by herself.
+ */
+export function chatText(event, calendarName = null) {
+  let text = `Let us talk about my event "${cut(event.title, 200)}", ${whenText(event)}`;
+  if (calendarName !== null) text += `, in my ${cut(calendarName, 100)} calendar`;
+  if (event.place !== null) text += `, at ${cut(event.place, 200)}`;
+  text += ".";
+  if (event.project !== null)
+    text += ` It belongs to my project "${cut(event.project.title, 200)}" (${cut(event.project.path, 400)}).`;
+  return cut(text, chatLimit);
+}
+
+/**
+ * Where an event's menu shows: as its details do (see `tooltipPosition`), with a `maxHeight` in
+ * pixels, so it stays inside the frame and off the top right `corner` at every size. When the menu
+ * cannot move left of the corner, it starts below the corner and scrolls.
+ */
+export function menuPosition(anchor, size, frame, { margin = 4, corner = 56 } = {}) {
+  const place = tooltipPosition(anchor, size, frame, { margin, corner });
+  let { top } = place;
+  let maxHeight = frame.height - 2 * margin;
+  if (top < corner && place.left + size.width > frame.width - corner) {
+    top = corner;
+    maxHeight = frame.height - corner - margin;
+  }
+  maxHeight = Math.max(40, Math.min(maxHeight, frame.height - top - margin));
+  return { left: place.left, top, side: place.side, maxHeight };
 }

@@ -6,7 +6,8 @@ This repository is a widget for Eva's home page: a small web page that Eva shows
 
 - **This repository is public, and holds no data of a person.** It holds only mock data for the tests and the demo. Never write a name of a private person, a real data value, a token or a home path.
 - **Plain, standard web code.** HTML, JavaScript and CSS, with no framework and no build step. A browser loads the files as they are.
-- **The widget talks to its host only through `fetch` to relative paths** of the contract: `config.json`, `eva/google-calendar/`, `eva/location.json` and `eva/theme.css`. Its other addresses are the hosts of its manifest: `https://api.open-meteo.com` and `https://air-quality-api.open-meteo.com`.
+- **The widget talks to its host only through `fetch` to relative paths** of the contract: `config.json`, `eva/google-calendar/`, `eva/location.json`, `eva/state.json` and `eva/theme.css`, **and through the asks of its manifest** (`hello`, `chat` and `open`, by `postMessage` to its parent, each `chat` or `open` right after a tap). Its other addresses are the hosts of its manifest: `https://api.open-meteo.com` and `https://air-quality-api.open-meteo.com`.
+- **The widget's own state is `{ "hiddenCalendars": [...] }` in `eva/state.json`.** A save keeps the keys that the widget does not know. Outside Eva the state stays in memory.
 - **The widget works outside Eva,** on GitHub Pages and with `npm start`. A calendar path that answers 404 falls back to its mock file in `example/google-calendar/`. Inside Eva the path always answers, so a mock event never shows there.
 - **The calendar is read only.** A write to Google Calendar is a new permission: add it only with the owner.
 - **The calendar never waits for the weather.** With no location, or with no forecast, the widget shows the calendar alone.
@@ -20,17 +21,17 @@ This repository is a widget for Eva's home page: a small web page that Eva shows
 - Never rely on a form submit, also `<form method="dialog">`: Eva's sandbox blocks it. Handle each button with a `click` listener.
 - Set a colour or a position with `element.style.setProperty`: the CSS object model is not an inline style, so Eva's policy allows it. Never write a `style` attribute.
 - Keep each calendar's Google colour, and give it a pattern of `patterns` in `calendar.js` too, so calendars differ by more than colour.
-- A tap on an event opens its `link` in a new tab, with `rel="noopener"`. Open only an `https` link.
-- A pull request that adds or widens a permission of `eva-widget.json` says so in its body: a new input, a write access, the location, or a host.
+- A tap on an event opens its menu. The menu's Google Calendar entry opens the event's `link` in a new tab, with `rel="noopener"`. Open only an `https` link. An entry that needs Eva shows only when her answer to `hello` approved its ask.
+- A pull request that adds or widens a permission of `eva-widget.json` says so in its body: a new input, a write access, the location, a host, or an ask.
 - Keep the mock files in line with the code: `config.json`, `eva/theme.css`, `example/location.json` and `example/google-calendar/`. The mock events start on 2026-01-01, with no time zone offset: the widget moves them so that this day is today. Keep `exampleAnchor` in `main.js` in line with them.
 - Keep the logic in `calendar.js` and `forecast.js`, with no page code, so the unit tests in `tests/*.test.js` run it in Node.
-- Never call the real Open-Meteo in a test. Use `fakeWeather` of `tests/helpers.js`. Fake Eva's calendar with `fakeEvaCalendar`.
+- Never call the real Open-Meteo in a test. Use `fakeWeather` of `tests/helpers.js`. Fake Eva's calendar with `fakeEvaCalendar`, her state with `fakeEvaState`, and her answers to the asks with `openInEva`.
 - Keep `tests/fills-screen.spec.js`: the widget fills the space that it gets, at every size.
 
 ## Checks
 
 - `npm run check` runs every check: the format, the lint, the contract check (`npm run check:widget`) and the tests. CI runs the same checks as the "lint" and "test" jobs.
-- `npm start` runs the widget at http://localhost:3000/. Add `?size=small`, `medium`, `large`, `tall`, `xlarge` or `full` to the address.
+- `npm start` runs the widget at http://localhost:3000/. Add `?size=small`, `medium`, `large`, `tall`, `xlarge`, `header` or `full` to the address.
 
 ## Skills
 

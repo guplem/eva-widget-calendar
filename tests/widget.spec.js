@@ -71,12 +71,11 @@ test.describe("the week view", () => {
     await expect(page.getByRole("link", { name: "Open-Meteo" })).toHaveAttribute("href", "https://open-meteo.com/");
   });
 
-  test("a tap on an event opens its link in a new tab", async ({ page }) => {
+  test("each event is a button that opens its menu", async ({ page }) => {
     await open(page, "xlarge");
-    const link = page.getByRole("link", { name: /Deep work/ });
-    await expect(link).toHaveAttribute("href", "https://calendar.google.com/calendar/");
-    await expect(link).toHaveAttribute("target", "_blank");
-    await expect(link).toHaveAttribute("rel", "noopener");
+    const target = page.getByRole("button", { name: /Deep work/ });
+    await expect(target).toHaveAttribute("aria-haspopup", "menu");
+    await expect(target).toHaveAttribute("aria-expanded", "false");
   });
 
   test("hover shows the forecast of that moment in the corner, and a marker on every chart", async ({ page }) => {
@@ -195,7 +194,8 @@ test.describe("inside Eva", () => {
     expect(asked.searchParams.get("from")).toBe(testToday);
     expect(asked.searchParams.get("to")).toBe("2026-03-17");
     await expect(page.locator(".event")).toHaveCount(1);
-    await expect(event(page, "Board meeting")).toHaveAttribute(
+    await event(page, "Board meeting").click();
+    await expect(page.getByRole("menuitem", { name: "See in Google Calendar" })).toHaveAttribute(
       "href",
       "https://calendar.google.com/calendar/event?eid=e1",
     );
@@ -477,24 +477,4 @@ test.describe("the details of an event", () => {
       }
     });
   }
-});
-
-test.describe("on a touch screen", () => {
-  test.use({ viewport: { width: 390, height: 700 }, hasTouch: true, isMobile: true });
-
-  test("the first tap shows the details, and a second tap opens the event", async ({ page, context }) => {
-    await context.route("https://calendar.google.com/**", (route) =>
-      route.fulfill({ status: 200, contentType: "text/html", body: "<p>Google Calendar</p>" }),
-    );
-    await open(page, "xlarge");
-    const target = event(page, "Deep work");
-    const opened = [];
-    context.on("page", (other) => opened.push(other));
-    await target.tap();
-    await expect(page.locator(".tooltip .tooltip-title")).toHaveText("Deep work");
-    expect(opened).toHaveLength(0);
-    const popup = context.waitForEvent("page");
-    await target.tap();
-    expect((await popup).url()).toContain("https://calendar.google.com/");
-  });
 });

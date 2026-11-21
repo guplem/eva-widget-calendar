@@ -1,5 +1,5 @@
 {
-  "contract": 2,
+  "contract": 3,
   "name": "Calendar",
   "entry": "index.html",
   "size": "xlarge",
@@ -30,6 +30,14 @@
       "required": false,
       "choices": ["celsius", "fahrenheit"],
       "default": "celsius"
+    },
+    {
+      "id": "hideTitles",
+      "type": "text",
+      "label": "Hide events by title",
+      "description": "Regular expressions, case-insensitive, separated by commas, such as ^Lunch$, Focus time. An event whose title matches one of them does not show.",
+      "why": "The widget hides repeated events that tell you nothing, such as a daily block of focus time.",
+      "required": false
     }
   ],
   "hosts": [
@@ -40,6 +48,16 @@
     {
       "url": "https://air-quality-api.open-meteo.com",
       "why": "The widget gets the air quality of today from Open-Meteo. It sends your location, rounded to about one kilometre."
+    }
+  ],
+  "asks": [
+    {
+      "type": "chat",
+      "why": "From the menu of an event, the widget can start a chat with Eva about it: it puts a short text with the event's title, day, time, place and project in the message box. You still send it yourself."
+    },
+    {
+      "type": "open",
+      "why": "From the menu of an event that belongs to a project, the widget can open that project's page in Eva."
     }
   ],
   "prompt": "The Calendar widget on the home page shows the person's Google Calendar for the next days, with the forecast of each day."
