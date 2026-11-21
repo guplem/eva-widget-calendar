@@ -26,7 +26,7 @@ Weather data by [Open-Meteo](https://open-meteo.com/), under [CC BY 4.0](https:/
 - Move the pointer over an event, or move the keyboard focus to it, to see its details in a tooltip: the full title, the day and the time with the duration, the calendar, the project, the place, the forecast during the event (the lowest and highest temperature, the highest chance of rain and the sky; for an all-day event, those of its days), and the start of its description. Escape closes it. At the same time, a box in the event's colour marks its hours on the chart of its day: on each day's chart for an event over midnight, and over the whole chart for an all-day event.
 - **Projects.** When the description of an event in Google Calendar holds a line such as `[eva-project:2026-11-02-1030-example-app]`, Eva links the event to that project. The event shows a small folder before its title, when its block has room, and its details and menu name the project.
 - **The menu of an event.** A click or a tap on an event opens a small menu:
-  - **Open a chat about this event:** Eva puts a short text in her message box (the title, the day and the time, the calendar, the place, and the project with its folder). You read it, add to it, and send it yourself.
+  - **Start a chat about this event:** Eva puts a short text in her message box (the title, the day and the time, the calendar, the place, and the project with its folder). You read it, add to it, and send it yourself.
   - **Open the project:** Eva opens the project's page. Only for an event with a project.
   - **See in Google Calendar:** opens the event in a new tab.
 

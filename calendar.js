@@ -620,7 +620,7 @@ export function visibleEvents(events, hidden, hideTitle = null) {
  */
 export function menuEntries(event, asks) {
   const entries = [];
-  if (asks.has("chat")) entries.push({ kind: "chat", label: "Open a chat about this event" });
+  if (asks.has("chat")) entries.push({ kind: "chat", label: "Start a chat about this event" });
   if (event.project !== null && asks.has("open")) entries.push({ kind: "project", label: "Open the project" });
   if (event.link !== null) entries.push({ kind: "google", label: "See in Google Calendar" });
   return entries;
