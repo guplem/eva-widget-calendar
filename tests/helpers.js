@@ -108,3 +108,67 @@ export async function open(page, size, { now = testNow } = {}) {
   await page.goto(size === undefined ? "/" : `/?size=${size}`);
   await page.locator('.widget[data-ready="true"]').waitFor();
 }
+
+/**
+ * Answers `eva/state.json` as Eva does: GET gives the saved state (`{}` when nothing is saved), and
+ * PUT replaces it. Returns the list of the bodies that the widget wrote.
+ */
+export async function fakeEvaState(page, initial = {}) {
+  const writes = [];
+  let saved = initial;
+  await page.route("**/eva/state.json", async (route) => {
+    const request = route.request();
+    if (request.method() === "PUT") {
+      saved = JSON.parse(request.postData() ?? "null");
+      writes.push(saved);
+      return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    }
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(saved) });
+  });
+  return writes;
+}
+
+/**
+ * Opens the widget in an iframe of a fake parent page that answers the asks of contract 3 as Eva
+ * does: `hello` with the approved `asks`, and each other ask with ok, or with `{ ok: false, reason }`
+ * for an ask named in `refuse`. With `answer: false`, the parent never answers, as outside Eva.
+ * Returns the frame of the widget; `asked(page)` lists the messages that the parent got.
+ */
+export async function openInEva(
+  page,
+  size,
+  { asks = ["chat", "open"], answer = true, refuse = {}, now = testNow } = {},
+) {
+  const config = JSON.stringify({ asks, answer, refuse });
+  await page.route("**/eva-parent.html", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: `<!doctype html><html><head><style>html,body{margin:0;height:100%}iframe{display:block;width:100vw;height:100vh;border:0}</style></head>
+<body><iframe src="/?size=${size}" title="Calendar"></iframe><script>
+const config = ${config};
+window.asked = [];
+addEventListener("message", (event) => {
+  const data = event.data;
+  if (data === null || typeof data !== "object" || data.eva !== "widget" || typeof data.ask !== "string") return;
+  window.asked.push(data);
+  if (!config.answer) return;
+  let reply = { eva: "widget", id: data.id, ok: true };
+  if (data.ask === "hello") reply.asks = config.asks;
+  else if (config.refuse[data.ask] !== undefined) reply = { eva: "widget", id: data.id, ok: false, reason: config.refuse[data.ask] };
+  event.source.postMessage(reply, "*");
+});
+</script></body></html>`,
+    }),
+  );
+  await page.clock.setFixedTime(now);
+  await page.goto("/eva-parent.html");
+  const frame = page.frameLocator("iframe");
+  await frame.locator('.widget[data-ready="true"]').waitFor();
+  return frame;
+}
+
+/** The messages that the fake parent page of `openInEva` got from the widget. */
+export async function asked(page) {
+  return page.evaluate(() => window.asked);
+}
