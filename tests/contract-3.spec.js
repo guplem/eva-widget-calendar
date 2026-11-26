@@ -2,7 +2,7 @@
 // input, projects, and the menu of an event with the asks to Eva. The asks go to a fake parent page
 // that answers as Eva does (openInEva of tests/helpers.js).
 import { expect, test } from "@playwright/test";
-import { asked, fakeEvaCalendar, fakeEvaState, fakeWeather, open, openInEva, testToday } from "./helpers.js";
+import { asked, box, fakeEvaCalendar, fakeEvaState, fakeWeather, open, openInEva, testToday } from "./helpers.js";
 
 test.beforeEach(async ({ page }) => {
   await fakeWeather(page);
@@ -10,7 +10,6 @@ test.beforeEach(async ({ page }) => {
 
 const event = (scope, title) => scope.locator(".event", { hasText: title }).first();
 const key = (scope, name) => scope.getByRole("button", { name, exact: true });
-const box = async (locator) => locator.boundingBox();
 
 test.describe("calendars on and off", () => {
   test.use({ viewport: { width: 1280, height: 800 } });

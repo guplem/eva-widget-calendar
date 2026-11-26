@@ -2,6 +2,8 @@
 // made-up forecast for the days after a given day. The tests also fix the clock, and the
 // Playwright config fixes the time zone, so the mock events and the forecast fall on known hours.
 
+import { expect } from "@playwright/test";
+
 /** The time of the tests: Wednesday 2026-03-11 at 14:20, in the UTC time zone of the browser. */
 export const testNow = new Date("2026-03-11T14:20:00Z");
 export const testToday = "2026-03-11";
@@ -171,4 +173,19 @@ addEventListener("message", (event) => {
 /** The messages that the fake parent page of `openInEva` got from the widget. */
 export async function asked(page) {
   return page.evaluate(() => window.asked);
+}
+
+/**
+ * The box of a node, once it has one. A redraw, such as when the forecast arrives, swaps the nodes
+ * for a moment, and `boundingBox` then answers null.
+ */
+export async function box(locator) {
+  let found = null;
+  await expect
+    .poll(async () => {
+      found = await locator.boundingBox();
+      return found;
+    })
+    .not.toBeNull();
+  return found;
 }
