@@ -25,6 +25,7 @@ import {
   safeLink,
   tooltipPosition,
   untilText,
+  whenParts,
   whenText,
 } from "../calendar.js";
 
@@ -286,24 +287,42 @@ test("the day and the time span of an event, with its duration", () => {
   assert.equal(whenText(events.long), "Fri 13 Mar 10:00 – Sun 15 Mar 10:00 · 2 days");
 });
 
-test("the tooltip shows above its event, else below, else beside it, and always inside the frame", () => {
+test("the tooltip shows left of its event, else right, so the event's own day stays in view", () => {
   const frame = { width: 400, height: 300 };
   const size = { width: 120, height: 60 };
   const place = (anchor) => tooltipPosition(anchor, size, frame);
-  assert.deepEqual(place({ left: 100, top: 150, right: 160, bottom: 200 }), { left: 70, top: 84, side: "above" });
-  assert.deepEqual(place({ left: 100, top: 40, right: 160, bottom: 100 }), { left: 70, top: 106, side: "below" });
-  assert.deepEqual(place({ left: 100, top: 20, right: 160, bottom: 280 }), { left: 166, top: 20, side: "right" });
-  assert.deepEqual(place({ left: 300, top: 20, right: 390, bottom: 280 }), { left: 174, top: 20, side: "left" });
-  // At the edge, it moves inside the frame.
-  assert.deepEqual(place({ left: 0, top: 150, right: 30, bottom: 200 }), { left: 4, top: 84, side: "above" });
-  // It keeps the top right corner free for Eva's full-screen button.
-  assert.deepEqual(place({ left: 340, top: 120, right: 400, bottom: 180 }), { left: 224, top: 54, side: "above" });
+  // Room on the left: it covers the day before, which matters less.
+  assert.deepEqual(place({ left: 200, top: 150, right: 260, bottom: 200 }), { left: 74, top: 150, side: "left" });
+  // No room on the left, as in the first day: on the right.
+  assert.deepEqual(place({ left: 50, top: 150, right: 110, bottom: 200 }), { left: 116, top: 150, side: "right" });
+  // It lines up with the top of the event, inside the frame.
+  assert.deepEqual(place({ left: 200, top: 280, right: 260, bottom: 296 }), { left: 74, top: 236, side: "left" });
+  // An event as wide as the frame, as a row of a list: above it, else below it.
+  assert.deepEqual(place({ left: 0, top: 150, right: 400, bottom: 200 }), { left: 140, top: 84, side: "above" });
+  assert.deepEqual(place({ left: 0, top: 40, right: 400, bottom: 100 }), { left: 140, top: 106, side: "below" });
+  // It keeps the top right corner free for Eva's full-screen button: beside an event, it moves down.
+  assert.deepEqual(place({ left: 360, top: 10, right: 396, bottom: 30 }), { left: 234, top: 56, side: "left" });
   // In a frame smaller than the tooltip, it starts at the margin.
   assert.deepEqual(tooltipPosition({ left: 0, top: 0, right: 50, bottom: 50 }, size, { width: 100, height: 50 }), {
     left: 4,
     top: 4,
     side: "inside",
   });
+});
+
+test("the details split the time of an event from its day and its length, so the time reads first", () => {
+  const events = Object.fromEntries(
+    readEvents([
+      timed("work", "2026-03-11T15:00:00Z", "2026-03-11T17:00:00Z"),
+      timed("night", "2026-03-11T22:00:00Z", "2026-03-12T02:00:00Z"),
+      { id: "whole", calendarId: "home", title: "Holiday", date: "2026-03-14", endDate: "2026-03-14" },
+      { id: "trip", calendarId: "home", title: "Trip", date: "2026-03-14", endDate: "2026-03-15" },
+    ]).map((event) => [event.id, event]),
+  );
+  assert.deepEqual(whenParts(events.work), { time: "15:00–17:00", day: "Wed 11 Mar · 2 h" });
+  assert.deepEqual(whenParts(events.night), { time: "22:00 – 02:00", day: "Wed 11 – Thu 12 Mar · 4 h" });
+  assert.deepEqual(whenParts(events.whole), { time: "All day", day: "Sat 14 Mar" });
+  assert.deepEqual(whenParts(events.trip), { time: "All day", day: "Sat 14 – Sun 15 Mar · 2 days" });
 });
 
 test("the hours widen to an early or a late event, and a day needs no scroll bar when the hours fit", () => {

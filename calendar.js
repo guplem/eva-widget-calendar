@@ -435,40 +435,61 @@ export function whenText(event) {
 }
 
 /**
- * Where the details of an event show, inside the frame: above the event, else below it, else
- * beside it (right, then left), else over it, as `{ left, top, side }` in pixels from the top left
- * of the frame. `anchor` is the event's box `{ left, top, right, bottom }`, `size` the tooltip's
- * `{ width, height }` and `frame` the widget's `{ width, height }`. The top right `corner` stays
- * free for Eva's full-screen button: a tooltip there moves left, or else down.
+ * The day and the time span of an event split in two, so the details show the time first:
+ * `{ time: "15:00–17:00", day: "Wed 11 Mar · 2 h" }`, `{ time: "All day", day: "Sat 14 – Sun 15 Mar · 2 days" }`.
+ */
+export function whenParts(event) {
+  if (event.start !== undefined) {
+    const first = dayOf(event.start);
+    const last = dayOf(event.end);
+    const duration = durationText(event.end.getTime() - event.start.getTime());
+    if (first === last)
+      return { time: `${clockOf(event.start)}–${clockOf(event.end)}`, day: `${fullDay(first)} · ${duration}` };
+    return { time: `${clockOf(event.start)} – ${clockOf(event.end)}`, day: `${rangeLabel(first, last)} · ${duration}` };
+  }
+  if (event.date === event.endDate) return { time: "All day", day: fullDay(event.date) };
+  const days = daysBetween(event.date, event.endDate) + 1;
+  return { time: "All day", day: `${rangeLabel(event.date, event.endDate)} · ${String(days)} days` };
+}
+
+/**
+ * Where the details of an event show, inside the frame: left of the event, else right of it, so
+ * they cover the day before and never the event's own day, else above it, else below it, else over
+ * it, as `{ left, top, side }` in pixels from the top left of the frame. Beside the event, they
+ * line up with its top. `anchor` is the event's box `{ left, top, right, bottom }`, `size` the
+ * tooltip's `{ width, height }` and `frame` the widget's `{ width, height }`. The top right `corner`
+ * stays free for Eva's full-screen button: a tooltip there moves down, or else left.
  */
 export function tooltipPosition(anchor, size, frame, { gap = 6, margin = 4, corner = 56 } = {}) {
   const clamp = (value, low, high) => Math.max(low, Math.min(value, high));
   const maxLeft = frame.width - size.width - margin;
   const maxTop = frame.height - size.height - margin;
-  let left = clamp((anchor.left + anchor.right) / 2 - size.width / 2, margin, maxLeft);
-  let top;
+  let left;
+  let top = clamp(anchor.top, margin, maxTop);
   let side;
-  if (anchor.top - gap - size.height >= margin) {
-    top = anchor.top - gap - size.height;
-    side = "above";
-  } else if (anchor.bottom + gap + size.height <= frame.height - margin) {
-    top = anchor.bottom + gap;
-    side = "below";
+  if (anchor.left - gap - size.width >= margin) {
+    left = anchor.left - gap - size.width;
+    side = "left";
+  } else if (anchor.right + gap + size.width <= frame.width - margin) {
+    left = anchor.right + gap;
+    side = "right";
   } else {
-    top = clamp(anchor.top, margin, maxTop);
-    if (anchor.right + gap + size.width <= frame.width - margin) {
-      left = anchor.right + gap;
-      side = "right";
-    } else if (anchor.left - gap - size.width >= margin) {
-      left = anchor.left - gap - size.width;
-      side = "left";
+    left = clamp((anchor.left + anchor.right) / 2 - size.width / 2, margin, maxLeft);
+    if (anchor.top - gap - size.height >= margin) {
+      top = anchor.top - gap - size.height;
+      side = "above";
+    } else if (anchor.bottom + gap + size.height <= frame.height - margin) {
+      top = anchor.bottom + gap;
+      side = "below";
     } else {
       top = clamp(anchor.top + gap, margin, maxTop);
       side = "inside";
     }
   }
   if (top < corner && left + size.width > frame.width - corner) {
-    if (frame.width - corner - size.width >= margin) left = frame.width - corner - size.width;
+    const beside = side === "left" || side === "right";
+    if (beside && corner + size.height <= frame.height - margin) top = corner;
+    else if (frame.width - corner - size.width >= margin) left = frame.width - corner - size.width;
     else if (corner + size.height <= frame.height - margin) top = corner;
   }
   return { left: Math.max(margin, left), top: Math.max(margin, top), side };
@@ -620,10 +641,41 @@ export function visibleEvents(events, hidden, hideTitle = null) {
  */
 export function menuEntries(event, asks) {
   const entries = [];
+  const maps = mapsLink(event.place);
+  if (maps !== null) entries.push({ kind: "maps", label: "Directions in Google Maps", href: maps });
+  const call = callLink(event);
+  if (call !== null) entries.push({ kind: "call", label: "Join the video call", href: call });
   if (asks.has("chat")) entries.push({ kind: "chat", label: "Start a chat about this event" });
   if (event.project !== null && asks.has("open")) entries.push({ kind: "project", label: "Open the project" });
-  if (event.link !== null) entries.push({ kind: "google", label: "See in Google Calendar" });
+  if (event.link !== null) entries.push({ kind: "google", label: "See in Google Calendar", href: event.link });
   return entries;
+}
+
+/** A place that is an address of the web, such as a link to a call, and no place to go to. */
+const webAddress = /^(?:[a-z][a-z0-9+.-]*:\/\/|www\.|[\w-]+(?:\.[\w-]+)+\/)/i;
+
+/**
+ * The way to an event's place in Google Maps, which opens the Maps app on a phone, or null with no
+ * place or with a place that is an address of the web.
+ */
+export function mapsLink(place) {
+  const text = typeof place === "string" ? place.trim() : "";
+  if (text === "" || webAddress.test(text)) return null;
+  return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(text)}`;
+}
+
+/** A link of Google Meet, Zoom or Microsoft Teams, up to a space, a quote or a closing bracket. */
+const callPattern =
+  /https:\/\/(?:meet\.google\.com|(?:[\w-]+\.)*zoom\.us|teams\.microsoft\.com|teams\.live\.com)\/[^\s"'<>()[\]]*/i;
+
+/** The link of the event's video call, from its place, else from its description, or null. */
+export function callLink(event) {
+  for (const text of [event.place, event.description]) {
+    const found = typeof text === "string" ? callPattern.exec(text) : null;
+    // A full stop or a comma that ends a sentence is not part of the link.
+    if (found !== null) return safeLink(found[0].replace(/[.,;:!?]+$/, ""));
+  }
+  return null;
 }
 
 /** The longest text of a chat ask: Eva refuses a longer one. */

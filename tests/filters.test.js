@@ -6,6 +6,8 @@ import {
   chatText,
   hideTitlesLimits,
   isSlowPattern,
+  callLink,
+  mapsLink,
   menuEntries,
   menuPosition,
   readEvents,
@@ -126,22 +128,52 @@ test("the events of a hidden calendar and the events with a hidden title do not 
   assert.deepEqual(ids(visibleEvents(events, ["home"], titleFilter("^busy$"))), ["1"]);
 });
 
-test("the menu of an event offers what Eva approved, the project when there is one, and Google's link", () => {
+test("the menu of an event offers the way there, the call, what Eva approved, and Google's link", () => {
   const kinds = (event, asks) => menuEntries(event, new Set(asks)).map((entry) => entry.kind);
   const full = read();
-  const plain = read({ project: null });
-  const bare = read({ project: null, link: null });
-  assert.deepEqual(kinds(full, ["chat", "open"]), ["chat", "project", "google"]);
+  const plain = read({ project: null, place: null });
+  const bare = read({ project: null, link: null, place: null });
+  assert.deepEqual(kinds(full, ["chat", "open"]), ["maps", "chat", "project", "google"]);
   assert.deepEqual(kinds(plain, ["chat", "open"]), ["chat", "google"]);
-  assert.deepEqual(kinds(full, ["open"]), ["project", "google"]);
-  assert.deepEqual(kinds(full, ["chat"]), ["chat", "google"]);
+  assert.deepEqual(kinds(full, ["open"]), ["maps", "project", "google"]);
+  assert.deepEqual(kinds(full, ["chat"]), ["maps", "chat", "google"]);
   // Outside Eva, or with no answer to hello.
-  assert.deepEqual(kinds(full, []), ["google"]);
+  assert.deepEqual(kinds(full, []), ["maps", "google"]);
   assert.deepEqual(kinds(bare, []), []);
   assert.deepEqual(
     menuEntries(full, new Set(["chat", "open"])).map((entry) => entry.label),
-    ["Start a chat about this event", "Open the project", "See in Google Calendar"],
+    ["Directions in Google Maps", "Start a chat about this event", "Open the project", "See in Google Calendar"],
   );
+  // A video call in the place or in the description: a link to join it, and no way there.
+  const call = read({ place: "https://meet.google.com/abc-defg-hij", project: null });
+  assert.deepEqual(kinds(call, []), ["call", "google"]);
+  assert.equal(menuEntries(call, new Set())[0].href, "https://meet.google.com/abc-defg-hij");
+  const zoom = read({ description: "Join: https://us02web.zoom.us/j/123?pwd=x).", project: null });
+  assert.deepEqual(
+    menuEntries(zoom, new Set()).map((entry) => [entry.kind, entry.href ?? null]),
+    [
+      ["maps", "https://www.google.com/maps/dir/?api=1&destination=Room%20B"],
+      ["call", "https://us02web.zoom.us/j/123?pwd=x"],
+      ["google", "https://calendar.google.com/calendar/event?eid=e1"],
+    ],
+  );
+});
+
+test("the way there opens Google Maps for a place, never for an address of the web", () => {
+  assert.equal(
+    mapsLink("Plaça de Catalunya, 1"),
+    "https://www.google.com/maps/dir/?api=1&destination=Pla%C3%A7a%20de%20Catalunya%2C%201",
+  );
+  assert.equal(mapsLink(null), null);
+  assert.equal(mapsLink("  "), null);
+  assert.equal(mapsLink("https://zoom.us/j/1"), null);
+  assert.equal(mapsLink("meet.google.com/abc-defg-hij"), null);
+  assert.equal(callLink({ place: null, description: "No call here: https://example.com/x" }), null);
+  assert.equal(
+    callLink({ place: "Teams https://teams.microsoft.com/l/meetup-join/1", description: null }),
+    "https://teams.microsoft.com/l/meetup-join/1",
+  );
+  assert.equal(callLink({ place: null, description: "http://meet.google.com/abc" }), null);
 });
 
 test("the chat text names the event, its day and time, its calendar, its place and its project", () => {
@@ -163,9 +195,12 @@ test("the chat text names the event, its day and time, its calendar, its place a
 
 test("the menu stays inside the frame and off the top right corner, and scrolls when it must", () => {
   const frame = { width: 400, height: 300 };
-  // Room above the event.
-  const above = menuPosition({ left: 20, right: 120, top: 200, bottom: 240 }, { width: 200, height: 120 }, frame);
-  assert.deepEqual([above.left, above.top, above.side], [4, 74, "above"]);
+  // No room on the left of the event: on its right, as low as the frame lets it.
+  const beside = menuPosition({ left: 20, right: 120, top: 200, bottom: 240 }, { width: 200, height: 120 }, frame);
+  assert.deepEqual([beside.left, beside.top, beside.side], [126, 176, "right"]);
+  // An event as wide as the frame: above it.
+  const above = menuPosition({ left: 0, right: 400, top: 200, bottom: 240 }, { width: 200, height: 120 }, frame);
+  assert.deepEqual([above.left, above.top, above.side], [100, 74, "above"]);
   // An event at the top right: the menu moves left of the corner.
   const right = menuPosition({ left: 300, right: 396, top: 10, bottom: 30 }, { width: 200, height: 120 }, frame);
   assert.ok(right.left + 200 <= frame.width - 56 || right.top >= 56);

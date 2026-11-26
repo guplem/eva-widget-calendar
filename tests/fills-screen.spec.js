@@ -1,7 +1,7 @@
 // The widget fills the space that it gets, at every size, with no empty border (the widget
 // contract). Eva's setup report checks that this test exists. Keep it.
 import { expect, test } from "@playwright/test";
-import { fakeWeather, testNow } from "./helpers.js";
+import { box, fakeWeather, testNow } from "./helpers.js";
 
 // The tests never call the real Open-Meteo, and run at a known time.
 test.beforeEach(async ({ page }) => {
@@ -69,7 +69,7 @@ for (const viewport of [
       expect(cut, part).toBeLessThanOrEqual(1);
     }
     // The text box of the event ends inside the frame, under no line of another part.
-    const next = await page.locator(".small-next").first().boundingBox();
+    const next = await box(page.locator(".small-next").first());
     const lines = await page
       .locator(".small-next > *")
       .evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().bottom));
@@ -82,6 +82,6 @@ test("small at 203 x 150 keeps the top right corner free for Eva's full-screen b
   await page.goto("/?size=small");
   await expect(page.locator(".widget")).toHaveAttribute("data-ready", "true");
   await expect(page.locator(".small-next").first()).toBeVisible();
-  const next = await page.locator(".small-next").first().boundingBox();
+  const next = await box(page.locator(".small-next").first());
   expect(next.y >= 56 || next.x + next.width <= 203 - 56).toBe(true);
 });

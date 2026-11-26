@@ -35,7 +35,7 @@ import {
   tooltipPosition,
   untilText,
   visibleEvents,
-  whenText,
+  whenParts,
 } from "./calendar.js";
 import {
   airQualityOf,
@@ -394,6 +394,43 @@ function folderIcon() {
   picture.append(
     svg("path", { d: "M1.75 4a1 1 0 0 1 1-1h3.4l1.5 1.6h5.6a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1z" }),
   );
+  return picture;
+}
+
+/** The strokes of each line icon of the details and the menu, on a 16 x 16 box. */
+const lineIcons = {
+  clock: [
+    ["circle", { cx: 8, cy: 8, r: 6 }],
+    ["path", { d: "M8 4.8V8l2.2 1.4" }],
+  ],
+  place: [
+    ["path", { d: "M8 14.5s4.5-4.3 4.5-7.7a4.5 4.5 0 0 0-9 0c0 3.4 4.5 7.7 4.5 7.7z" }],
+    ["circle", { cx: 8, cy: 6.8, r: 1.6 }],
+  ],
+  notes: [["path", { d: "M3 4h10M3 8h10M3 12h6" }]],
+  rain: [["path", { d: "M8 2.2s4 4.4 4 7.3a4 4 0 0 1-8 0c0-2.9 4-7.3 4-7.3z" }]],
+  chat: [["path", { d: "M2.5 3h11v7.5h-6.2L4.5 13v-2.5h-2z" }]],
+  project: [
+    ["path", { d: "M1.75 4a1 1 0 0 1 1-1h3.4l1.5 1.6h5.6a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1z" }],
+  ],
+  maps: [
+    ["path", { d: "M8 1.6 14.4 8 8 14.4 1.6 8z" }],
+    ["path", { d: "M6.1 9.6V7.5h3.6M8.4 5.9l1.6 1.6-1.6 1.6" }],
+  ],
+  call: [
+    ["rect", { x: 1.8, y: 4.3, width: 8.4, height: 7.4, rx: 1.5 }],
+    ["path", { d: "M10.2 7.1l4-2.3v6.4l-4-2.3" }],
+  ],
+  google: [
+    ["rect", { x: 2.3, y: 3.2, width: 11.4, height: 10.5, rx: 1.5 }],
+    ["path", { d: "M2.3 6.6h11.4M5.3 1.8v2.8M10.7 1.8v2.8" }],
+  ],
+};
+
+/** A small line icon, in the colour of the text, for a line of the details or an entry of the menu. */
+function lineIcon(kind) {
+  const picture = svg("svg", { viewBox: "0 0 16 16", class: `line-icon line-icon-${kind}`, "aria-hidden": "true" });
+  for (const [tag, attributes] of lineIcons[kind]) picture.append(svg(tag, attributes));
   return picture;
 }
 
@@ -950,7 +987,19 @@ function tooltipNode() {
 
 const findKey = (key) => root.querySelector(`[data-key="${CSS.escape(key)}"]`);
 
-/** The forecast during an event, as one line of its details, or null with no forecast. */
+/** A line of an event's details: an icon in its own column, then the text. */
+function detailRow(className, mark, ...content) {
+  const row = element("span", `detail-row ${className}`);
+  const text = element("span", "detail-text");
+  text.append(...content);
+  row.append(mark, text);
+  return row;
+}
+
+/**
+ * The forecast during an event, as one line of its details: the sky, the low and the high, and the
+ * chance of rain, or null with no forecast.
+ */
 function eventWeather(event) {
   if (state.weather !== "ready") return null;
   const during =
@@ -958,42 +1007,62 @@ function eventWeather(event) {
       ? weatherOfDays(state.forecast, event.date, event.endDate)
       : weatherBetween(state.forecast, event.start, event.end);
   if (during === null) return null;
-  const line = element("span", "tooltip-weather");
-  const words = [];
+  const parts = [];
+  let mark = icon("cloud");
   if (during.code !== null) {
     const { text, icon: kind } = sky(during.code);
-    line.append(icon(kind));
-    words.push(text);
+    mark = icon(kind);
+    parts.push(element("span", "weather-sky", text));
   }
   const low = degrees(during.low);
   const high = degrees(during.high);
-  words.push(low === high ? low : `${low}–${high}`);
-  if (during.rain !== null) words.push(`Rain ${String(during.rain)}%`);
-  line.append(words.join(" · "));
-  return line;
+  parts.push(element("b", "weather-degrees", low === high ? low : `${low}–${high}`));
+  if (during.rain !== null) {
+    const rain = element("span", "weather-rain");
+    rain.setAttribute("aria-label", `Rain ${String(during.rain)}%`);
+    rain.append(lineIcon("rain"), `${String(during.rain)}%`);
+    parts.push(rain);
+  }
+  return detailRow("tooltip-weather", mark, ...parts);
 }
 
 /** The line of an event's project: a folder and the project's title. */
 function projectLine(className, project) {
-  const line = element("span", className);
-  line.append(folderIcon(), element("span", "", project.title));
-  return line;
+  return detailRow(className, lineIcon("project"), project.title);
 }
 
-/**
- * The details of an event under its title: the day and the time, the calendar, the project, the
- * place, the forecast during it and the start of its description.
- */
-function detailLines(event) {
+/** The line of an event's calendar, under its title: the calendar's colour and pattern, and its name. */
+function calendarLine(event) {
   const calendar = state.calendars.get(event.calendarId) ?? unknownCalendar;
   const name = element("span", "tooltip-calendar");
   name.append(paint(element("span", "legend-swatch event-bar"), event.calendarId), calendar.name);
-  const lines = [element("span", "tooltip-when", whenText(event)), name];
-  if (event.project !== null) lines.push(projectLine("tooltip-project", event.project));
-  if (event.place !== null) lines.push(element("span", "tooltip-place", event.place));
+  return name;
+}
+
+/**
+ * The details of an event under its title, one line each with its icon: the time, apart from the
+ * day and the length, the place, the forecast during it, the project and the start of its
+ * description.
+ */
+function detailLines(event) {
+  const when = whenParts(event);
+  const lines = [
+    calendarLine(event),
+    detailRow(
+      "tooltip-when",
+      lineIcon("clock"),
+      element("b", "when-time", when.time),
+      element("span", "when-day", when.day),
+    ),
+  ];
+  if (event.place !== null) lines.push(detailRow("tooltip-place", lineIcon("place"), event.place));
   const weather = eventWeather(event);
   if (weather !== null) lines.push(weather);
-  if (event.description !== null) lines.push(element("span", "tooltip-description", event.description));
+  if (event.project !== null) lines.push(projectLine("tooltip-project", event.project));
+  if (event.description !== null)
+    lines.push(
+      detailRow("tooltip-description", lineIcon("notes"), element("span", "description-text", event.description)),
+    );
   return lines;
 }
 
@@ -1159,9 +1228,10 @@ function renderMenu() {
 }
 
 function menuItem(entry, event) {
-  if (entry.kind === "google") {
-    const link = element("a", "menu-item", entry.label);
-    link.href = event.link;
+  if (entry.href !== undefined) {
+    const link = element("a", "menu-item");
+    link.append(lineIcon(entry.kind), element("span", "", entry.label));
+    link.href = entry.href;
     link.target = "_blank";
     link.rel = "noopener";
     link.setAttribute("role", "menuitem");
@@ -1170,7 +1240,8 @@ function menuItem(entry, event) {
     link.addEventListener("click", () => setTimeout(() => closeMenu(false), 0));
     return link;
   }
-  const button = element("button", "menu-item", entry.label);
+  const button = element("button", "menu-item");
+  button.append(lineIcon(entry.kind), element("span", "", entry.label));
   button.type = "button";
   button.setAttribute("role", "menuitem");
   button.tabIndex = -1;

@@ -1,14 +1,13 @@
 // The views of the widget, with the mock events of example/google-calendar/ (moved to the test day),
 // the made-up forecast of tests/helpers.js, and Eva's answers where a test fakes them.
 import { expect, test } from "@playwright/test";
-import { fakeEvaCalendar, fakeWeather, open, testToday } from "./helpers.js";
+import { box, fakeEvaCalendar, fakeWeather, open, testToday } from "./helpers.js";
 
 test.beforeEach(async ({ page }) => {
   await fakeWeather(page);
 });
 
 const event = (page, title) => page.locator(".event", { hasText: title }).first();
-const box = async (locator) => locator.boundingBox();
 const zIndex = (locator) => locator.evaluate((node) => Number(getComputedStyle(node).zIndex));
 
 test.describe("the week view", () => {
@@ -30,8 +29,8 @@ test.describe("the week view", () => {
     await expect(page.locator(".day-head .day-weather").first()).toHaveText("16°/7°");
     await expect(page.locator(".day-head .chart")).toHaveCount(7);
     await expect(page.locator(".scale-label")).toHaveText(["10°", "20°"]);
-    const standup = await event(page, "Team standup").boundingBox();
-    const deepWork = await event(page, "Deep work").boundingBox();
+    const standup = await box(event(page, "Team standup"));
+    const deepWork = await box(event(page, "Deep work"));
     // 09:00 to 15:00 is six hours; 15:00 to 17:00 is two.
     expect((deepWork.height + 2) / 2).toBeCloseTo((deepWork.y - standup.y) / 6, 0);
   });
@@ -80,10 +79,10 @@ test.describe("the week view", () => {
 
   test("hover shows the forecast of that moment in the corner, and a marker on every chart", async ({ page }) => {
     await open(page, "xlarge");
-    const column = await page.locator(".day-column").nth(1).boundingBox();
+    const column = await box(page.locator(".day-column").nth(1));
     const hourPx = parseFloat(await page.locator(".grid").evaluate((node) => node.style.getPropertyValue("--hour")));
     // Thursday at about 15:00: the made-up forecast has rain from 13:00 to 20:00 that day.
-    const startY = (await event(page, "Sprint planning").boundingBox()).y;
+    const startY = (await box(event(page, "Sprint planning"))).y;
     await page.mouse.move(column.x + column.width / 2, startY + hourPx + 1);
     await expect(page.locator(".grid")).toHaveClass(/is-hovering/);
     await expect(page.locator(".readout-day")).toHaveText("Thu 12");
@@ -426,11 +425,17 @@ test.describe("the details of an event", () => {
     await event(page, "Sprint planning").hover();
     await expect(tooltip(page)).toBeVisible();
     await expect(tooltip(page).locator(".tooltip-title")).toHaveText("Sprint planning");
-    await expect(tooltip(page).locator(".tooltip-when")).toHaveText("Thu 12 Mar · 14:00–15:30 · 1 h 30 min");
+    // Each line starts with its icon, and the time reads first, apart from the day and the length.
+    await expect(tooltip(page).locator(".when-time")).toHaveText("14:00–15:30");
+    await expect(tooltip(page).locator(".when-day")).toHaveText("Thu 12 Mar · 1 h 30 min");
     await expect(tooltip(page).locator(".tooltip-calendar")).toHaveText("Work");
     await expect(tooltip(page).locator(".tooltip-calendar .event-bar")).toHaveCount(1);
     await expect(tooltip(page).locator(".tooltip-place")).toHaveText("Room B");
-    await expect(tooltip(page).locator(".tooltip-weather")).toHaveText(/^Light rain · \d+°–\d+° · Rain 60%$/);
+    await expect(tooltip(page).locator(".weather-sky")).toHaveText("Light rain");
+    await expect(tooltip(page).locator(".weather-degrees")).toHaveText(/^\d+°–\d+°$/);
+    await expect(tooltip(page).locator(".weather-rain")).toHaveText("60%");
+    for (const line of ["when", "place", "weather"])
+      await expect(tooltip(page).locator(`.tooltip-${line} > .line-icon, .tooltip-${line} > .icon`)).toHaveCount(1);
     // The readout of the chart shows too.
     await expect(page.locator(".grid")).toHaveClass(/is-hovering/);
     await expect(page.locator(".readout-day")).toHaveText("Thu 12");
@@ -441,8 +446,25 @@ test.describe("the details of an event", () => {
   test("an all-day event shows the low, the high and the chance of rain of its days", async ({ page }) => {
     await open(page, "xlarge");
     await page.locator(".all-day-event", { hasText: "Trip to the coast" }).hover();
-    await expect(tooltip(page).locator(".tooltip-when")).toHaveText("Sat 14 – Sun 15 Mar · 2 days");
-    await expect(tooltip(page).locator(".tooltip-weather")).toHaveText("Clear · 9°–18° · Rain 60%");
+    await expect(tooltip(page).locator(".when-time")).toHaveText("All day");
+    await expect(tooltip(page).locator(".when-day")).toHaveText("Sat 14 – Sun 15 Mar · 2 days");
+    await expect(tooltip(page).locator(".weather-sky")).toHaveText("Clear");
+    await expect(tooltip(page).locator(".weather-degrees")).toHaveText("9°–18°");
+    await expect(tooltip(page).locator(".weather-rain")).toHaveText("60%");
+  });
+
+  test("sits left of the event, over the day before, and right of it only on the first day", async ({ page }) => {
+    await open(page, "xlarge");
+    const later = event(page, "Code review");
+    await later.hover();
+    const left = await box(tooltip(page));
+    const laterBox = await box(later);
+    expect(left.x + left.width).toBeLessThanOrEqual(laterBox.x);
+    const first = event(page, "Deep work");
+    await first.hover();
+    const right = await box(tooltip(page));
+    const firstBox = await box(first);
+    expect(right.x).toBeGreaterThanOrEqual(firstBox.x + firstBox.width);
   });
 
   test("focus on an event shows its details, and Escape hides them", async ({ page }) => {
