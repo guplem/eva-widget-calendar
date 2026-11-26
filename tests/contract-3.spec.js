@@ -211,12 +211,13 @@ test.describe("the menu of an event", () => {
     await expect.poll(async () => (await asked(page)).map((message) => message.ask)).toContain("hello");
     await event(frame, "Sprint planning").click();
     await expect(items(frame)).toHaveText([
+      "Directions in Google Maps",
       "Start a chat about this event",
       "Open the project",
       "See in Google Calendar",
     ]);
     await expect(menu(frame).locator(".menu-project")).toHaveText("Recipe app");
-    await items(frame).first().click();
+    await items(frame).nth(1).click();
     await expect(menu(frame)).toBeHidden();
     const chat = (await asked(page)).find((message) => message.ask === "chat");
     expect(chat.eva).toBe("widget");
@@ -231,8 +232,10 @@ test.describe("the menu of an event", () => {
     const frame = await openInEva(page, "xlarge");
     await event(frame, "Sprint planning").click();
     await menu(frame).getByRole("menuitem", { name: "Open the project" }).click();
-    const ask = (await asked(page)).find((message) => message.ask === "open");
-    expect(ask.path).toBe("Projects/2025-12-15-1400-recipe-app");
+    // The ask reaches the fake parent a moment after the tap.
+    await expect
+      .poll(async () => (await asked(page)).find((message) => message.ask === "open")?.path)
+      .toBe("Projects/2025-12-15-1400-recipe-app");
   });
 
   test("an event with no project has no project entry", async ({ page }) => {
@@ -245,14 +248,18 @@ test.describe("the menu of an event", () => {
     const frame = await openInEva(page, "xlarge", { asks: ["chat"] });
     await expect.poll(async () => (await asked(page)).length).toBeGreaterThan(0);
     await event(frame, "Sprint planning").click();
-    await expect(items(frame)).toHaveText(["Start a chat about this event", "See in Google Calendar"]);
+    await expect(items(frame)).toHaveText([
+      "Directions in Google Maps",
+      "Start a chat about this event",
+      "See in Google Calendar",
+    ]);
   });
 
   test("with no answer to hello, the entries that need Eva hide", async ({ page }) => {
     const frame = await openInEva(page, "xlarge", { answer: false });
     await page.waitForTimeout(500);
     await event(frame, "Sprint planning").click();
-    await expect(items(frame)).toHaveText(["See in Google Calendar"]);
+    await expect(items(frame)).toHaveText(["Directions in Google Maps", "See in Google Calendar"]);
   });
 
   test("a refused ask says so, and an ask that is not allowed leaves the menu", async ({ page }) => {
@@ -263,6 +270,21 @@ test.describe("the menu of an event", () => {
     await menu(frame).getByRole("menuitem", { name: "Start a chat about this event" }).click();
     await expect(menu(frame).locator(".menu-status")).toHaveText("Eva does not allow this widget to do that.");
     await expect(menu(frame).getByRole("menuitem", { name: "Start a chat about this event" })).toHaveCount(0);
+  });
+
+  test("each entry has its icon, a place opens its way there in Google Maps, and a call its link", async ({ page }) => {
+    await open(page, "xlarge");
+    await event(page, "Sprint planning").click();
+    await expect(items(page)).toHaveText(["Directions in Google Maps", "See in Google Calendar"]);
+    const maps = items(page).first();
+    await expect(maps).toHaveAttribute("href", "https://www.google.com/maps/dir/?api=1&destination=Room%20B");
+    await expect(maps).toHaveAttribute("target", "_blank");
+    await expect(maps).toHaveAttribute("rel", "noopener");
+    for (const item of await items(page).all()) await expect(item.locator(".line-icon")).toHaveCount(1);
+    await page.keyboard.press("Escape");
+    await event(page, "One to one").click();
+    await expect(items(page)).toHaveText(["Join the video call", "See in Google Calendar"]);
+    await expect(items(page).first()).toHaveAttribute("href", "https://meet.google.com/abc-defg-hij");
   });
 
   test("the keyboard opens the menu with Enter, moves with the arrows, and Escape gives the focus back", async ({
@@ -277,7 +299,7 @@ test.describe("the menu of an event", () => {
     await expect(items(frame).nth(1)).toBeFocused();
     await page.keyboard.press("ArrowUp");
     await page.keyboard.press("ArrowUp");
-    await expect(items(frame).nth(2)).toBeFocused();
+    await expect(items(frame).nth(3)).toBeFocused();
     await page.keyboard.press("Home");
     await expect(items(frame).nth(0)).toBeFocused();
     await page.keyboard.press("Escape");
@@ -338,7 +360,8 @@ test.describe("on a touch screen", () => {
     const shown = frame.locator(".menu");
     await expect(shown).toBeVisible();
     await expect(shown.locator(".menu-title")).toHaveText("Deep work");
-    await expect(shown.locator(".tooltip-when")).toHaveText("Wed 11 Mar · 15:00–17:00 · 2 h");
+    await expect(shown.locator(".when-time")).toHaveText("15:00–17:00");
+    await expect(shown.locator(".when-day")).toHaveText("Wed 11 Mar · 2 h");
     await expect(shown.locator(".tooltip-project")).toHaveText("Recipe app");
     await expect(frame.locator(".tooltip")).toBeHidden();
     await frame.locator(".day-head").first().tap();

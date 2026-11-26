@@ -426,11 +426,17 @@ test.describe("the details of an event", () => {
     await event(page, "Sprint planning").hover();
     await expect(tooltip(page)).toBeVisible();
     await expect(tooltip(page).locator(".tooltip-title")).toHaveText("Sprint planning");
-    await expect(tooltip(page).locator(".tooltip-when")).toHaveText("Thu 12 Mar · 14:00–15:30 · 1 h 30 min");
+    // Each line starts with its icon, and the time reads first, apart from the day and the length.
+    await expect(tooltip(page).locator(".when-time")).toHaveText("14:00–15:30");
+    await expect(tooltip(page).locator(".when-day")).toHaveText("Thu 12 Mar · 1 h 30 min");
     await expect(tooltip(page).locator(".tooltip-calendar")).toHaveText("Work");
     await expect(tooltip(page).locator(".tooltip-calendar .event-bar")).toHaveCount(1);
     await expect(tooltip(page).locator(".tooltip-place")).toHaveText("Room B");
-    await expect(tooltip(page).locator(".tooltip-weather")).toHaveText(/^Light rain · \d+°–\d+° · Rain 60%$/);
+    await expect(tooltip(page).locator(".weather-sky")).toHaveText("Light rain");
+    await expect(tooltip(page).locator(".weather-degrees")).toHaveText(/^\d+°–\d+°$/);
+    await expect(tooltip(page).locator(".weather-rain")).toHaveText("60%");
+    for (const line of ["when", "place", "weather"])
+      await expect(tooltip(page).locator(`.tooltip-${line} > .line-icon, .tooltip-${line} > .icon`)).toHaveCount(1);
     // The readout of the chart shows too.
     await expect(page.locator(".grid")).toHaveClass(/is-hovering/);
     await expect(page.locator(".readout-day")).toHaveText("Thu 12");
@@ -441,8 +447,25 @@ test.describe("the details of an event", () => {
   test("an all-day event shows the low, the high and the chance of rain of its days", async ({ page }) => {
     await open(page, "xlarge");
     await page.locator(".all-day-event", { hasText: "Trip to the coast" }).hover();
-    await expect(tooltip(page).locator(".tooltip-when")).toHaveText("Sat 14 – Sun 15 Mar · 2 days");
-    await expect(tooltip(page).locator(".tooltip-weather")).toHaveText("Clear · 9°–18° · Rain 60%");
+    await expect(tooltip(page).locator(".when-time")).toHaveText("All day");
+    await expect(tooltip(page).locator(".when-day")).toHaveText("Sat 14 – Sun 15 Mar · 2 days");
+    await expect(tooltip(page).locator(".weather-sky")).toHaveText("Clear");
+    await expect(tooltip(page).locator(".weather-degrees")).toHaveText("9°–18°");
+    await expect(tooltip(page).locator(".weather-rain")).toHaveText("60%");
+  });
+
+  test("sits left of the event, over the day before, and right of it only on the first day", async ({ page }) => {
+    await open(page, "xlarge");
+    const later = event(page, "Code review");
+    await later.hover();
+    const left = await box(tooltip(page));
+    const laterBox = await box(later);
+    expect(left.x + left.width).toBeLessThanOrEqual(laterBox.x);
+    const first = event(page, "Deep work");
+    await first.hover();
+    const right = await box(tooltip(page));
+    const firstBox = await box(first);
+    expect(right.x).toBeGreaterThanOrEqual(firstBox.x + firstBox.width);
   });
 
   test("focus on an event shows its details, and Escape hides them", async ({ page }) => {

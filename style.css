@@ -957,9 +957,10 @@ button:focus-visible {
   flex-direction: column;
   gap: 3px;
   width: max-content;
-  max-width: min(280px, calc(100vw - 8px));
+  min-width: min(200px, calc(100vw - 8px));
+  max-width: min(300px, calc(100vw - 8px));
   max-height: calc(100vh - 8px);
-  padding: 7px 10px;
+  padding: 8px 10px;
   border-radius: 8px;
   background: var(--ink, #1f2430);
   color: var(--bg, #f5f6fa);
@@ -986,29 +987,87 @@ button:focus-visible {
   overflow-wrap: anywhere;
 }
 
-.tooltip-when,
-.tooltip-place,
-.tooltip-weather,
-.tooltip-calendar,
-.tooltip-project {
+/* The calendar, under the title: small, as a label of where the event comes from. */
+.tooltip-calendar {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: color-mix(in srgb, var(--bg, #f5f6fa) 82%, transparent);
+  margin: -1px 0 3px;
+  color: color-mix(in srgb, var(--bg, #f5f6fa) 70%, transparent);
+  font-size: 11px;
   overflow-wrap: anywhere;
 }
 
-.tooltip-when {
+/* Each line of the details: its icon in one column, so the eye finds each kind of line at once. */
+.detail-row {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: start;
+  padding-top: 4px;
+  border-top: 1px solid color-mix(in srgb, var(--bg, #f5f6fa) 14%, transparent);
+  color: color-mix(in srgb, var(--bg, #f5f6fa) 88%, transparent);
+  overflow-wrap: anywhere;
+}
+
+.detail-row > .line-icon,
+.detail-row > .icon {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+}
+
+.detail-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  min-width: 0;
+}
+
+.when-time {
   font-family: var(--mono);
+  font-size: 12px;
+}
+
+.when-day {
+  color: color-mix(in srgb, currentColor 75%, transparent);
   font-size: 11px;
 }
 
-.tooltip-description {
+.weather-degrees {
+  font-family: var(--mono);
+}
+
+.weather-rain {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.weather-rain .line-icon {
+  width: 11px;
+  height: 11px;
+  stroke: var(--accent, #3b82f6);
+}
+
+.description-text {
   display: -webkit-box;
   overflow: hidden;
   white-space: pre-line;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
+}
+
+.line-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .folder-icon {
@@ -1094,22 +1153,18 @@ button:focus-visible {
   overflow-wrap: anywhere;
 }
 
-.menu-head .tooltip-when,
-.menu-head .tooltip-place,
-.menu-head .tooltip-weather,
 .menu-head .tooltip-calendar,
-.menu-head .tooltip-project,
-.menu-head .tooltip-description,
-.menu-project {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.menu-head .detail-row {
   color: var(--muted, #5d6475);
-  overflow-wrap: anywhere;
 }
 
-.menu-head .tooltip-description {
-  display: -webkit-box;
+.menu-head .detail-row {
+  border-top-color: var(--line, #d9dce5);
+}
+
+.menu-head .when-time,
+.menu-head .weather-degrees {
+  color: var(--ink, #1f2430);
 }
 
 .menu-list {
@@ -1123,6 +1178,7 @@ button:focus-visible {
 .menu-item {
   display: flex;
   align-items: center;
+  gap: 9px;
   min-height: 32px;
   padding: 6px 8px;
   border-radius: 6px;
@@ -1138,6 +1194,17 @@ button:focus-visible {
 
 .menu-item:focus-visible {
   outline-offset: -2px;
+}
+
+.menu-item .line-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--muted, #5d6475);
+}
+
+.menu-item:hover .line-icon,
+.menu-item:focus-visible .line-icon {
+  color: inherit;
 }
 
 .menu-status {
