@@ -66,7 +66,10 @@ test.describe("calendars on and off", () => {
     await fakeEvaState(page, { hiddenCalendars: ["work@example.com"] });
     await page.setViewportSize({ width: 600, height: 300 });
     await open(page, "medium");
-    await expect(page.locator(".day-group").first().locator(".agenda-title")).toHaveText(["Gym"]);
+    await expect(page.locator(".day-group").first().locator(".agenda-title")).toHaveText([
+      "Pay the electricity bill",
+      "Gym",
+    ]);
     await expect(page.locator(".hidden-note")).toHaveText("1 calendar hidden");
   });
 });

@@ -1,5 +1,5 @@
 {
-  "contract": 3,
+  "contract": 4,
   "name": "Calendar",
   "entry": "index.html",
   "size": "xlarge",
@@ -12,6 +12,15 @@
       "description": "Your Google calendars and their events, through Eva's Google login.",
       "why": "The widget shows your events of the next days, in the colour of each calendar. It only reads them, and it never sees your Google login.",
       "required": true
+    },
+    {
+      "id": "tasks",
+      "type": "eva-google-tasks",
+      "access": "read",
+      "label": "Google Tasks",
+      "description": "Your Google Tasks with a due day, through Eva's Google login.",
+      "why": "The widget shows each task on its due day, next to your events, with a box that says if it is done. It only reads them.",
+      "required": false
     },
     {
       "id": "location",
@@ -60,5 +69,5 @@
       "why": "From the menu of an event that belongs to a project, the widget can open that project's page in Eva."
     }
   ],
-  "prompt": "The Calendar widget on the home page shows the person's Google Calendar for the next days, with the forecast of each day."
+  "prompt": "The Calendar widget on the home page shows the person's Google Calendar and their Google Tasks with a due day for the next days, with the forecast of each day."
 }
