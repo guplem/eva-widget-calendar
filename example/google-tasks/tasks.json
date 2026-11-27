@@ -1,0 +1,32 @@
+[
+  {
+    "id": "example-task-1",
+    "listId": "home-list",
+    "title": "Pay the electricity bill",
+    "dueDate": "2026-01-01",
+    "completed": false,
+    "completedAt": null,
+    "notes": "The bill is in the shared folder.",
+    "link": "https://tasks.google.com/"
+  },
+  {
+    "id": "example-task-2",
+    "listId": "work-list",
+    "title": "Send the sprint notes",
+    "dueDate": "2026-01-02",
+    "completed": true,
+    "completedAt": "2026-01-02T16:30:00Z",
+    "notes": null,
+    "link": "https://tasks.google.com/"
+  },
+  {
+    "id": "example-task-3",
+    "listId": "home-list",
+    "title": "Book the car service",
+    "dueDate": "2026-01-04",
+    "completed": false,
+    "completedAt": null,
+    "notes": null,
+    "link": "https://tasks.google.com/"
+  }
+]

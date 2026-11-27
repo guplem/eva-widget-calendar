@@ -1,10 +1,10 @@
 # Calendar
 
-A widget for [Eva](https://github.com/guplem/eva)'s home page. It shows your Google Calendar for the next days, with the forecast of each day next to your events.
+A widget for [Eva](https://github.com/guplem/eva)'s home page. It shows your Google Calendar and your Google Tasks for the next days, with the forecast of each day next to your events.
 
 **Demo:** https://guplem.github.io/eva-widget-calendar/
 
-The demo shows made-up events that always start today. Its forecast is for your real location when your browser allows it, and for an example location otherwise.
+The demo shows made-up events and tasks that always start today. Its forecast is for your real location when your browser allows it, and for an example location otherwise.
 
 Weather data by [Open-Meteo](https://open-meteo.com/), under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
@@ -23,20 +23,25 @@ Weather data by [Open-Meteo](https://open-meteo.com/), under [CC BY 4.0](https:/
   - **Turn a calendar off or on** with a tap on its name in the legend. Its events leave every view; its name stays in the legend, struck through, with its swatch crossed out. Inside Eva the choice is saved in your vault, so every device shows the same. On the demo it lasts until the page reloads. Cards with no legend say how many calendars are hidden: change it in full screen.
 - Each event keeps the colour of its calendar in Google. Each calendar also gets a pattern on the side of its events, such as stripes or dots, so calendars differ by more than colour.
 - An event with no title reads "Busy", as Google Calendar shows it.
-- Move the pointer over an event, or move the keyboard focus to it, to see its details in a tooltip: the full title, the day and the time with the duration, the calendar, the project, the place, the forecast during the event (the lowest and highest temperature, the highest chance of rain and the sky; for an all-day event, those of its days), and the start of its description. Escape closes it. At the same time, a box in the event's colour marks its hours on the chart of its day: on each day's chart for an event over midnight, and over the whole chart for an all-day event.
+- Move the pointer over an event, or move the keyboard focus to it, to see its details in a tooltip. The calendar shows under the title. Then each line starts with its icon: the time, with the day and the duration beside it; the place; the forecast during the event (the sky, the lowest and highest temperature, and the highest chance of rain; for an all-day event, those of its days); the project; and the start of the description. Escape closes it.
+  - The tooltip shows left of the event, so it covers the day before and never the event's own day. When there is no room on the left, such as for the first day, it shows on the right. Only an event as wide as the card, such as a row of the list, gets its tooltip above or below it. The menu of an event takes the same place. At the same time, a box in the event's colour marks its hours on the chart of its day: on each day's chart for an event over midnight, and over the whole chart for an all-day event.
 - **Projects.** When the description of an event in Google Calendar holds a line such as `[eva-project:2026-11-02-1030-example-app]`, Eva links the event to that project. The event shows a small folder before its title, when its block has room, and its details and menu name the project.
-- **The menu of an event.** A click or a tap on an event opens a small menu:
+- **The menu of an event.** A click or a tap on an event opens a small menu. Each entry has its icon:
+  - **Directions in Google Maps:** opens the way to the event's place in a new tab, or in the Maps app on a phone. Only for an event with a place that is not a web address.
+  - **Join the video call:** opens the Google Meet, Zoom or Microsoft Teams link of the event's place or description.
   - **Start a chat about this event:** Eva puts a short text in her message box (the title, the day and the time, the calendar, the place, and the project with its folder). You read it, add to it, and send it yourself.
   - **Open the project:** Eva opens the project's page. Only for an event with a project.
   - **See in Google Calendar:** opens the event in a new tab.
 
-  The first two need Eva and your approval of the widget's asks, so they do not show on the demo. On a touch screen, the menu also shows the event's details. From the keyboard, Enter opens the menu, the arrow keys move in it, and Escape closes it and gives the focus back to the event. A refusal of Eva shows in the menu.
+  The chat and the project need Eva and your approval of the widget's asks, so they do not show on the demo. On a touch screen, the menu also shows the event's details. From the keyboard, Enter opens the menu, the arrow keys move in it, and Escape closes it and gives the focus back to the event. A refusal of Eva shows in the menu.
 
+- **Tasks.** Each task of Google Tasks with a due day shows on that day, in the all-day row of the grid and as a "Task" row in the lists. A task has a box to tick before its title and a dashed outline, so it never reads as an event. A done task is struck through and dim. Google keeps only the day of a due date, never its time, so a task never fills hours of the grid. The legend names the tasks as "Tasks": tap it to turn them off or on, as a calendar. The tooltip of a task says if it is done, its due day, its list and its notes. Its menu offers a chat about it and **See in Google Tasks**.
 - The widget reads your calendar again every 5 minutes, and the forecast every 30 minutes.
 
 ## What it needs
 
 - **Your Google Calendar,** through Eva's own Google login. The widget only reads it, and it never sees your login. With no Google login, or with Calendar off, the widget says how to turn it on: in Eva, open **Settings > Connections > Google**, log in to Google, and tick Calendar.
+- **Your Google Tasks,** optional, through the same Google login. The widget only reads the tasks with a due day in the next 7 days. With no access, or with Tasks off in Eva, the widget shows the calendar alone.
 - **Your location,** optional, for the forecast. The widget sends it to `https://api.open-meteo.com` and `https://air-quality-api.open-meteo.com`, rounded to two decimals, about one kilometre. It sends nothing else. With no location, the widget shows the calendar with no weather.
 - The `unit` input picks Celsius or Fahrenheit.
 - The `hideTitles` input hides the events whose title matches it, such as a repeated block that tells you nothing. See [Hide events by title](#hide-events-by-title).
@@ -61,7 +66,7 @@ Fill **Hide events by title** with one pattern or more, separated by commas. Eac
 
 ## Add it to Eva
 
-Add the widget by its address: `https://github.com/guplem/eva-widget-calendar`. It needs an Eva that knows widget contract 3.
+Add the widget by its address: `https://github.com/guplem/eva-widget-calendar`. It needs an Eva that knows widget contract 4.
 
 ## Run it on your computer
 
@@ -76,7 +81,7 @@ Then open http://localhost:3000/. Add `?size=small`, `medium`, `large`, `tall`, 
 
 ## Change it
 
-The widget follows the [widget contract](https://github.com/guplem/eva/blob/main/docs/widgets.md) of Eva. `AGENTS.md` says how to work on it, for people and for coding agents. `npm run check` runs every check. The tests answer Open-Meteo with a made-up forecast, and use the mock events of `example/google-calendar/`. A fake parent page answers the asks of the widget as Eva does (`openInEva` in `tests/helpers.js`).
+The widget follows the [widget contract](https://github.com/guplem/eva/blob/main/docs/widgets.md) of Eva. `AGENTS.md` says how to work on it, for people and for coding agents. `npm run check` runs every check. The tests answer Open-Meteo with a made-up forecast, and use the mock events of `example/google-calendar/` and the mock tasks of `example/google-tasks/`. A fake parent page answers the asks of the widget as Eva does (`openInEva` in `tests/helpers.js`).
 
 ## License
 

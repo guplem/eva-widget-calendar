@@ -118,7 +118,7 @@ test("contract 2 refuses a calendar input with no access, or with a default", as
 
 test("contract 2 refuses an access on an input that is not a vault path or the calendar", async () => {
   const folder = await manifestWith((manifest) => {
-    manifest.inputs[1].access = "read";
+    manifest.inputs.find((input) => input.id === "location").access = "read";
   });
   assert.notDeepEqual(await checkWidget(folder), []);
 });

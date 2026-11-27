@@ -163,6 +163,53 @@ function sortKey(event) {
   return event.allDay ? startOfDay(event.date).getTime() : event.start.getTime();
 }
 
+/** The id of the tasks in the legend and in `hiddenCalendars`: no Google calendar has such an id. */
+export const tasksCalendarId = "eva-google-tasks";
+
+/** The tasks as one more calendar of the legend, so the person can hide them as a calendar. */
+export function tasksCalendar() {
+  return { id: tasksCalendarId, name: "Tasks", color: null, primary: false, pattern: "solid" };
+}
+
+/**
+ * The tasks of `eva/google-tasks/tasks.json`, as one-day items of the tasks calendar, or null for
+ * Eva's null answer. Google keeps only the day of a due date, so a task has no time. `lists` is the
+ * answer of `lists.json`, for the name of each task's list. A task with no due day is dropped.
+ */
+export function readTasks(value, lists) {
+  if (!Array.isArray(value)) return null;
+  const names = new Map(
+    (Array.isArray(lists) ? lists : [])
+      .filter((list) => typeof list?.id === "string" && typeof list.name === "string" && list.name !== "")
+      .map((list) => [list.id, list.name]),
+  );
+  const tasks = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) continue;
+    if (typeof item.dueDate !== "string" || !isoDay.test(item.dueDate)) continue;
+    tasks.push({
+      id: `task-${typeof item.id === "string" ? item.id : ""}`,
+      calendarId: tasksCalendarId,
+      title: typeof item.title === "string" && item.title.trim() !== "" ? item.title : "Untitled task",
+      place: null,
+      link: safeLink(item.link),
+      description:
+        typeof item.notes === "string" && item.notes.trim() !== "" ? item.notes.slice(0, descriptionLimit) : null,
+      project: null,
+      allDay: true,
+      date: item.dueDate,
+      endDate: item.dueDate,
+      task: { completed: item.completed === true, listName: names.get(item.listId) ?? null },
+    });
+  }
+  return tasks;
+}
+
+/** The events and the tasks in one list, in order: a task comes after the all-day events of its day. */
+export function withTasks(events, tasks) {
+  return [...events, ...tasks].sort((a, b) => sortKey(a) - sortKey(b));
+}
+
 /**
  * The bars of the all-day row over the shown `days`: one bar for each all-day event, from its
  * first shown day to its last, in the first lane that is free on those days. Returns
@@ -219,6 +266,7 @@ export function moveExample(value, anchor, today) {
     ...event,
     ...("date" in event ? { date: move(event.date), endDate: move(event.endDate) } : {}),
     ...("startAt" in event ? { startAt: move(event.startAt), endAt: move(event.endAt) } : {}),
+    ...("dueDate" in event ? { dueDate: move(event.dueDate) } : {}),
   }));
 }
 
@@ -439,6 +487,8 @@ export function whenText(event) {
  * `{ time: "15:00–17:00", day: "Wed 11 Mar · 2 h" }`, `{ time: "All day", day: "Sat 14 – Sun 15 Mar · 2 days" }`.
  */
 export function whenParts(event) {
+  if (event.task !== undefined)
+    return { time: event.task.completed ? "Done" : "To do", day: `Due ${fullDay(event.date)}` };
   if (event.start !== undefined) {
     const first = dayOf(event.start);
     const last = dayOf(event.end);
@@ -645,9 +695,13 @@ export function menuEntries(event, asks) {
   if (maps !== null) entries.push({ kind: "maps", label: "Directions in Google Maps", href: maps });
   const call = callLink(event);
   if (call !== null) entries.push({ kind: "call", label: "Join the video call", href: call });
-  if (asks.has("chat")) entries.push({ kind: "chat", label: "Start a chat about this event" });
+  const thing = event.task === undefined ? "event" : "task";
+  if (asks.has("chat")) entries.push({ kind: "chat", label: `Start a chat about this ${thing}` });
   if (event.project !== null && asks.has("open")) entries.push({ kind: "project", label: "Open the project" });
-  if (event.link !== null) entries.push({ kind: "google", label: "See in Google Calendar", href: event.link });
+  if (event.link !== null) {
+    const label = event.task === undefined ? "See in Google Calendar" : "See in Google Tasks";
+    entries.push({ kind: "google", label, href: event.link });
+  }
   return entries;
 }
 
@@ -688,6 +742,13 @@ const cut = (text, most) => (text.length > most ? `${text.slice(0, most - 1)}…
  * calendar, the place and the project, in a few words. Eva never sends it by herself.
  */
 export function chatText(event, calendarName = null) {
+  if (event.task !== undefined) {
+    let text = `Let us talk about my task "${cut(event.title, 200)}", due ${fullDay(event.date)}`;
+    if (event.task.listName !== null) text += `, in my ${cut(event.task.listName, 100)} list`;
+    text += ".";
+    if (event.task.completed) text += " It is done.";
+    return cut(text, chatLimit);
+  }
   let text = `Let us talk about my event "${cut(event.title, 200)}", ${whenText(event)}`;
   if (calendarName !== null) text += `, in my ${cut(calendarName, 100)} calendar`;
   if (event.place !== null) text += `, at ${cut(event.place, 200)}`;

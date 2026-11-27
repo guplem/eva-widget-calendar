@@ -30,12 +30,16 @@ import {
   readCalendars,
   readEvents,
   readHiddenCalendars,
+  readTasks,
   titleFilter,
   toggleCalendar,
+  tasksCalendar,
+  tasksCalendarId,
   tooltipPosition,
   untilText,
   visibleEvents,
   whenParts,
+  withTasks,
 } from "./calendar.js";
 import {
   airQualityOf,
@@ -77,6 +81,8 @@ const state = {
   calendar: "loading",
   calendars: new Map(),
   events: [],
+  /** The tasks with a due day, or null when Eva gives none: no input, no login, or Tasks off. */
+  tasks: null,
   /** The events that show: none of a hidden calendar, and none with a title that hideTitles hides. */
   shown: [],
   /** The ids of the hidden calendars. */
@@ -115,25 +121,42 @@ async function request(address) {
 }
 
 /**
- * A calendar path of Eva, or its mock file when the path does not exist, as on GitHub Pages. Inside
- * Eva the path always answers, so a mock event never shows there.
+ * A path of Eva's calendar or tasks, or its mock file when the path does not exist, as on GitHub
+ * Pages. Inside Eva the path always answers, so a mock event or task never shows there.
  */
-async function readCalendarPath(name, query = "") {
-  const eva = await request(`eva/google-calendar/${name}${query}`);
+async function readEvaPath(folder, name, query = "") {
+  const eva = await request(`eva/${folder}/${name}${query}`);
   if (eva.status === 200) return { example: false, body: eva.body };
   if (eva.status !== 404) return { failed: true };
-  const example = await request(`example/google-calendar/${name}`);
+  const example = await request(`example/${folder}/${name}`);
   return example.status === 200 ? { example: true, body: example.body } : { failed: true };
+}
+
+const readCalendarPath = (name, query = "") => readEvaPath("google-calendar", name, query);
+
+/**
+ * The tasks with a due day in the window. A failure keeps the tasks that the widget shows: the
+ * tasks never stop the calendar.
+ */
+async function loadTasks(query, today) {
+  const [lists, tasks] = await Promise.all([
+    readEvaPath("google-tasks", "lists.json"),
+    readEvaPath("google-tasks", "tasks.json", query),
+  ]);
+  if (lists.failed === true || tasks.failed === true) return state.tasks;
+  return readTasks(tasks.example ? moveExample(tasks.body, exampleAnchor, today) : tasks.body, lists.body);
 }
 
 async function loadCalendar() {
   const today = dayOf(new Date());
   const query = `?from=${today}&to=${addDays(today, windowDays - 1)}`;
-  const [calendars, events] = await Promise.all([
+  const [calendars, events, tasks] = await Promise.all([
     readCalendarPath("calendars.json"),
     readCalendarPath("events.json", query),
+    loadTasks(query, today),
     loadState(),
   ]);
+  state.tasks = tasks;
   // A new day starts here, also when the load fails, so the minute tick does not ask again each minute.
   state.today = today;
   clearTimeout(calendarTimer);
@@ -151,7 +174,8 @@ async function loadCalendar() {
     return;
   }
   state.calendars = new Map(list.map((calendar) => [calendar.id, calendar]));
-  state.events = found;
+  if (state.tasks !== null) state.calendars.set(tasksCalendar().id, tasksCalendar());
+  state.events = withTasks(found, state.tasks ?? []);
   state.calendar = "ready";
 }
 
@@ -384,6 +408,10 @@ function eventNode(event, className, place) {
   node.setAttribute("aria-expanded", "false");
   node.dataset.key = `${event.id}|${place}`;
   eventOf.set(node, event);
+  if (event.task !== undefined) {
+    node.classList.add("is-task");
+    if (event.task.completed) node.classList.add("is-done");
+  }
   node.append(element("span", "event-bar"));
   return paint(node, event.calendarId);
 }
@@ -421,6 +449,11 @@ const lineIcons = {
     ["rect", { x: 1.8, y: 4.3, width: 8.4, height: 7.4, rx: 1.5 }],
     ["path", { d: "M10.2 7.1l4-2.3v6.4l-4-2.3" }],
   ],
+  task: [["rect", { x: 2.5, y: 2.5, width: 11, height: 11, rx: 2.5 }]],
+  taskDone: [
+    ["rect", { x: 2.5, y: 2.5, width: 11, height: 11, rx: 2.5 }],
+    ["path", { d: "M5.2 8.2 7.2 10.2 10.9 5.9" }],
+  ],
   google: [
     ["rect", { x: 2.3, y: 3.2, width: 11.4, height: 10.5, rx: 1.5 }],
     ["path", { d: "M2.3 6.6h11.4M5.3 1.8v2.8M10.7 1.8v2.8" }],
@@ -443,9 +476,19 @@ function projectMark() {
   return mark;
 }
 
+/** The box of a task before its title: ticked when the task is done. A screen reader reads it. */
+function taskMark(completed) {
+  const mark = element("span", "task-mark");
+  mark.setAttribute("role", "img");
+  mark.setAttribute("aria-label", completed ? "Done task" : "Task");
+  mark.append(lineIcon(completed ? "taskDone" : "task"));
+  return mark;
+}
+
 /** The title of an event, with the mark of its project before it when there is one and it fits. */
 function titleNode(tag, className, event, fits = true) {
   const title = element(tag, className);
+  if (event.task !== undefined) title.append(taskMark(event.task.completed));
   if (event.project !== null && fits) title.append(projectMark());
   title.append(event.title);
   return title;
@@ -503,7 +546,7 @@ function agendaRows(day, now) {
     const row = element("li", "agenda-row");
     const box = eventNode(event, "agenda-event", `list-${day}`);
     box.append(titleNode("span", "agenda-title", event));
-    row.append(element("span", "agenda-time", "All day"), box);
+    row.append(element("span", "agenda-time", event.task === undefined ? "All day" : "Task"), box);
     rows.push(row);
   }
   const parts = partsOn(state.shown, day).filter((item) => item.event.end > now);
@@ -658,6 +701,7 @@ function legend(withWeather) {
     const swatch = element("span", "legend-swatch event-bar");
     key.append(swatch, element("span", "legend-name", calendar.name));
     paint(key, calendar.id);
+    if (calendar.id === tasksCalendarId) key.classList.add("is-tasks");
     key.addEventListener("click", () => toggleHidden(calendar.id));
     keys.append(key);
   }
@@ -1035,7 +1079,8 @@ function projectLine(className, project) {
 function calendarLine(event) {
   const calendar = state.calendars.get(event.calendarId) ?? unknownCalendar;
   const name = element("span", "tooltip-calendar");
-  name.append(paint(element("span", "legend-swatch event-bar"), event.calendarId), calendar.name);
+  const text = (event.task?.listName ?? null) === null ? calendar.name : `${calendar.name} · ${event.task.listName}`;
+  name.append(paint(element("span", "legend-swatch event-bar"), event.calendarId), text);
   return name;
 }
 
@@ -1050,7 +1095,7 @@ function detailLines(event) {
     calendarLine(event),
     detailRow(
       "tooltip-when",
-      lineIcon("clock"),
+      lineIcon(event.task === undefined ? "clock" : event.task.completed ? "taskDone" : "task"),
       element("b", "when-time", when.time),
       element("span", "when-day", when.day),
     ),

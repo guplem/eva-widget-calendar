@@ -104,6 +104,23 @@ export async function fakeEvaCalendar(page, { calendars = null, events = null, s
   return requests;
 }
 
+/**
+ * Answers eva/google-tasks/ as Eva does: `lists` and `tasks` as the bodies of lists.json and
+ * tasks.json (null for "no Google login or Tasks off"), or `status` for a failure. Returns the list
+ * of the addresses that the widget asked for.
+ */
+export async function fakeEvaTasks(page, { lists = null, tasks = null, status = 200 } = {}) {
+  const requests = [];
+  await page.route("**/eva/google-tasks/**", (route) => {
+    const url = new URL(route.request().url());
+    requests.push(url);
+    if (status !== 200) return route.fulfill({ status });
+    const body = url.pathname.endsWith("/lists.json") ? lists : tasks;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  });
+  return requests;
+}
+
 /** Opens the widget at a size, at the time of the tests, and waits until it has drawn. */
 export async function open(page, size, { now = testNow } = {}) {
   await page.clock.setFixedTime(now);

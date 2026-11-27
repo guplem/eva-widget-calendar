@@ -744,6 +744,55 @@ button:focus-visible {
   outline-offset: 0;
 }
 
+/* A task: a box to tick before its title, a dashed outline in place of a filled bar, so it never
+   reads as an event. A done task is struck through and dim. */
+.all-day-event.is-task,
+.agenda-event.is-task {
+  background: color-mix(in srgb, var(--calendar-colour, var(--accent, #3b82f6)) 8%, var(--panel, #ffffff));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--calendar-colour, var(--accent, #3b82f6)) 55%, transparent);
+  outline-offset: 0;
+}
+
+.all-day-event.is-task {
+  border: 1px dashed color-mix(in srgb, var(--calendar-colour, var(--accent, #3b82f6)) 70%, transparent);
+  box-shadow: none;
+}
+
+.all-day-event.is-task > .event-bar,
+.agenda-event.is-task > .event-bar {
+  display: none;
+}
+
+/* The key of the tasks in the legend: a box to tick, as before each task. */
+.legend-key.is-tasks .legend-swatch {
+  display: inline-block;
+  border: 1.5px solid var(--accent, #3b82f6);
+  border-radius: 3px;
+  background: none;
+  box-shadow: none;
+}
+
+.task-mark {
+  display: inline-flex;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+
+.task-mark .line-icon {
+  width: 12px;
+  height: 12px;
+  color: var(--accent, #3b82f6);
+}
+
+.is-task.is-done {
+  opacity: 0.6;
+}
+
+.is-task.is-done .event-title,
+.is-task.is-done .agenda-title {
+  text-decoration: line-through;
+}
+
 .event-title {
   display: block;
   overflow: hidden;

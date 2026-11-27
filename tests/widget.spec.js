@@ -1,7 +1,7 @@
 // The views of the widget, with the mock events of example/google-calendar/ (moved to the test day),
 // the made-up forecast of tests/helpers.js, and Eva's answers where a test fakes them.
 import { expect, test } from "@playwright/test";
-import { box, fakeEvaCalendar, fakeWeather, open, testToday } from "./helpers.js";
+import { box, fakeEvaCalendar, fakeEvaTasks, fakeWeather, open, testToday } from "./helpers.js";
 
 test.beforeEach(async ({ page }) => {
   await fakeWeather(page);
@@ -54,9 +54,9 @@ test.describe("the week view", () => {
   test("gives each calendar its colour and its own pattern, also in the legend", async ({ page }) => {
     await open(page, "xlarge");
     const keys = page.locator(".legend-key");
-    await expect(keys).toHaveText(["Work", "Personal", "Family", "Holidays"]);
+    await expect(keys).toHaveText(["Work", "Personal", "Family", "Holidays", "Tasks"]);
     const classes = await keys.evaluateAll((nodes) => nodes.map((node) => node.className));
-    expect(new Set(classes).size).toBe(4);
+    expect(new Set(classes).size).toBe(5);
     const colour = await event(page, "Dentist").evaluate((node) =>
       getComputedStyle(node).getPropertyValue("--calendar-colour"),
     );
@@ -139,13 +139,18 @@ test("the medium card shows today's remaining events, after the line of now", as
   await open(page, "medium");
   await expect(page.locator('[data-role="range"]')).toHaveText("Today, Wed 11");
   const today = page.locator(".day-group").first();
-  await expect(today.locator(".agenda-title")).toHaveText(["Deep work", "Gym"]);
+  // The task of the day first, as an all-day row.
+  await expect(today.locator(".agenda-title")).toHaveText(["Pay the electricity bill", "Deep work", "Gym"]);
   await expect(today.locator(".now-row .agenda-time")).toHaveText("14:20");
   await expect(page.locator(".medium-weather")).toContainText("14°");
 });
 
 test("the medium card says when no event is left today", async ({ page }) => {
   await page.setViewportSize({ width: 600, height: 300 });
+  // A task due today still counts: here the day has none.
+  await page.route("**/example/google-tasks/tasks.json", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: "[]" }),
+  );
   await open(page, "medium", { now: new Date(`${testToday}T21:00:00Z`) });
   await expect(page.locator(".agenda-empty").first()).toHaveText("No more events today.");
 });
@@ -163,10 +168,11 @@ test("the tall card shows the next days as a list, with the rows that fit whole"
   await open(page, "tall");
   await expect(page.locator(".day-group-name").first()).toHaveText("Today");
   await expect(page.locator(".day-group-name").nth(1)).toHaveText("Tomorrow");
-  const bottom = await page.locator(".day-list").evaluate((node) => node.getBoundingClientRect().bottom);
-  const rows = await page
-    .locator(".agenda > li")
-    .evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().bottom));
+  // One read of the list and its rows, so a redraw cannot fall between them.
+  const { bottom, rows } = await page.locator(".day-list").evaluate((node) => ({
+    bottom: node.getBoundingClientRect().bottom,
+    rows: [...node.querySelectorAll(".agenda > li")].map((row) => row.getBoundingClientRect().bottom),
+  }));
   for (const row of rows) expect(row).toBeLessThanOrEqual(bottom + 1);
 });
 
@@ -188,6 +194,8 @@ test.describe("inside Eva", () => {
 
   test("asks Eva for the events of 7 days from today, and shows hers, never the mock ones", async ({ page }) => {
     const requests = await fakeEvaCalendar(page, { calendars, events });
+    // Eva with Tasks off: no task, and never the mock ones.
+    await fakeEvaTasks(page);
     await open(page, "xlarge");
     const asked = requests.find((url) => url.pathname.endsWith("/events.json"));
     expect(asked.searchParams.get("from")).toBe(testToday);
@@ -309,6 +317,7 @@ test.describe("whole-day events", () => {
   test("inside Eva, a timed event over whole days goes to the row, and one over midnight stays in the grid, cut at the day edge", async ({
     page,
   }) => {
+    await fakeEvaTasks(page);
     await fakeEvaCalendar(page, {
       calendars: [{ id: "home", name: "Home", color: "#0b8043", primary: true }],
       events: [
